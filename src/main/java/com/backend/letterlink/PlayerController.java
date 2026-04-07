@@ -86,7 +86,7 @@ public class PlayerController {
 
         } catch (Exception e) {
             e.printStackTrace();
-            return "Error registering player";
+            return "Error registering player: " + e.getMessage();
         }
     }
 
@@ -171,7 +171,7 @@ public class PlayerController {
 
         } catch (Exception e) {
             e.printStackTrace();
-            return "Error getting player data";
+            return "Error getting player data: " + e.getMessage();
         }
     }
 
