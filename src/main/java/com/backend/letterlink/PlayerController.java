@@ -36,81 +36,72 @@ public class PlayerController {
 
         try (Connection conn = Database.getConnection()) {
             Database.ensureSchema(conn);
-            conn.setAutoCommit(false);
 
-            try {
-                if (usernameExists(conn, username)) {
-                    conn.rollback();
-                    return conflict("Username already exists");
-                }
-
-                try (PreparedStatement insertPlayer = conn.prepareStatement("""
-                    INSERT INTO players (
-                        id,
-                        username,
-                        auth_token,
-                        music_enabled,
-                        sfx_enabled,
-                        theme,
-                        wins,
-                        losses,
-                        current_gamemode,
-                        current_board_width,
-                        current_board_height,
-                        created_at,
-                        updated_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)
-                """)) {
-                    insertPlayer.setString(1, playerId);
-                    insertPlayer.setString(2, username);
-                    insertPlayer.setString(3, authToken);
-                    insertPlayer.setInt(4, boolToInt(GameDefaults.DEFAULT_MUSIC_ENABLED));
-                    insertPlayer.setInt(5, boolToInt(GameDefaults.DEFAULT_SFX_ENABLED));
-                    insertPlayer.setString(6, GameDefaults.DEFAULT_THEME);
-                    insertPlayer.setString(7, GameDefaults.DEFAULT_GAMEMODE);
-                    insertPlayer.setInt(8, GameDefaults.DEFAULT_BOARD_WIDTH);
-                    insertPlayer.setInt(9, GameDefaults.DEFAULT_BOARD_HEIGHT);
-                    insertPlayer.setString(10, now);
-                    insertPlayer.setString(11, now);
-                    insertPlayer.executeUpdate();
-                }
-
-                try (PreparedStatement insertMmr = conn.prepareStatement("""
-                    INSERT INTO player_mmr (
-                        player_id,
-                        mode,
-                        mmr,
-                        created_at,
-                        updated_at
-                    )
-                    VALUES (?, ?, ?, ?, ?)
-                """)) {
-                    for (String mode : GameDefaults.ALLOWED_MMR_MODES) {
-                        insertMmr.setString(1, playerId);
-                        insertMmr.setString(2, mode);
-                        insertMmr.setInt(3, GameDefaults.DEFAULT_MMR);
-                        insertMmr.setString(4, now);
-                        insertMmr.setString(5, now);
-                        insertMmr.addBatch();
-                    }
-                    insertMmr.executeBatch();
-                }
-
-                conn.commit();
-
-                ApiModels.RegisterPlayerData data = new ApiModels.RegisterPlayerData();
-                data.id = playerId;
-                data.username = username;
-                data.authToken = authToken;
-                return ok(data);
-
-            } catch (Exception e) {
-                safeRollback(conn);
-                throw e;
-            } finally {
-                restoreAutoCommit(conn);
+            if (usernameExists(conn, username)) {
+                return conflict("Username already exists");
             }
+
+            try (PreparedStatement insertPlayer = conn.prepareStatement("""
+                INSERT INTO players (
+                    id,
+                    username,
+                    auth_token,
+                    music_enabled,
+                    sfx_enabled,
+                    theme,
+                    wins,
+                    losses,
+                    current_gamemode,
+                    current_board_width,
+                    current_board_height,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)
+            """)) {
+                insertPlayer.setString(1, playerId);
+                insertPlayer.setString(2, username);
+                insertPlayer.setString(3, authToken);
+                insertPlayer.setInt(4, boolToInt(GameDefaults.DEFAULT_MUSIC_ENABLED));
+                insertPlayer.setInt(5, boolToInt(GameDefaults.DEFAULT_SFX_ENABLED));
+                insertPlayer.setString(6, GameDefaults.DEFAULT_THEME);
+                insertPlayer.setString(7, GameDefaults.DEFAULT_GAMEMODE);
+                insertPlayer.setInt(8, GameDefaults.DEFAULT_BOARD_WIDTH);
+                insertPlayer.setInt(9, GameDefaults.DEFAULT_BOARD_HEIGHT);
+                insertPlayer.setString(10, now);
+                insertPlayer.setString(11, now);
+                insertPlayer.executeUpdate();
+            }
+
+            try (PreparedStatement insertMmr = conn.prepareStatement("""
+                INSERT INTO player_mmr (
+                    player_id,
+                    mode,
+                    mmr,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+            """)) {
+                for (String mode : GameDefaults.ALLOWED_MMR_MODES) {
+                    insertMmr.setString(1, playerId);
+                    insertMmr.setString(2, mode);
+                    insertMmr.setInt(3, GameDefaults.DEFAULT_MMR);
+                    insertMmr.setString(4, now);
+                    insertMmr.setString(5, now);
+                    insertMmr.addBatch();
+                }
+                insertMmr.executeBatch();
+            } catch (Exception mmrInsertError) {
+                cleanupPartialPlayer(conn, playerId);
+                throw mmrInsertError;
+            }
+
+            ApiModels.RegisterPlayerData data = new ApiModels.RegisterPlayerData();
+            data.id = playerId;
+            data.username = username;
+            data.authToken = authToken;
+            return ok(data);
 
         } catch (SQLException e) {
             if (isUniqueConstraintViolation(e)) {
@@ -139,10 +130,10 @@ public class PlayerController {
         }
 
         String newToken = UUID.randomUUID() + "-" + UUID.randomUUID();
+        String now = Instant.now().toString();
 
         try (Connection conn = Database.getConnection()) {
             Database.ensureSchema(conn);
-            conn.setAutoCommit(false);
 
             try (PreparedStatement findPlayer = conn.prepareStatement("""
                 SELECT auth_token
@@ -153,13 +144,11 @@ public class PlayerController {
 
                 try (ResultSet rs = findPlayer.executeQuery()) {
                     if (!rs.next()) {
-                        conn.rollback();
                         return notFound("Player not found");
                     }
 
                     String existingToken = rs.getString("auth_token");
                     if (existingToken != null && !existingToken.isBlank()) {
-                        conn.rollback();
                         return unauthorized("Session token required for this player");
                     }
                 }
@@ -170,7 +159,6 @@ public class PlayerController {
                 SET auth_token = ?, updated_at = ?
                 WHERE id = ?
             """)) {
-                String now = Instant.now().toString();
                 updateToken.setString(1, newToken);
                 updateToken.setString(2, now);
                 updateToken.setString(3, requestedId);
@@ -178,9 +166,6 @@ public class PlayerController {
             }
 
             ApiModels.PlayerData data = fetchPlayerDataById(conn, requestedId);
-            conn.commit();
-            restoreAutoCommit(conn);
-
             if (data == null) {
                 return notFound("Player not found");
             }
@@ -372,47 +357,35 @@ public class PlayerController {
                 return unauthorized("Invalid player credentials");
             }
 
-            conn.setAutoCommit(false);
-            try {
-                try (PreparedStatement update = conn.prepareStatement("""
-                    UPDATE players
-                    SET
-                        wins = wins + ?,
-                        losses = losses + ?,
-                        updated_at = ?
-                    WHERE id = ?
-                """)) {
-                    update.setInt(1, request.winsToAdd);
-                    update.setInt(2, request.lossesToAdd);
-                    update.setString(3, now);
-                    update.setString(4, request.id);
+            try (PreparedStatement update = conn.prepareStatement("""
+                UPDATE players
+                SET
+                    wins = wins + ?,
+                    losses = losses + ?,
+                    updated_at = ?
+                WHERE id = ?
+            """)) {
+                update.setInt(1, request.winsToAdd);
+                update.setInt(2, request.lossesToAdd);
+                update.setString(3, now);
+                update.setString(4, request.id);
 
-                    if (update.executeUpdate() == 0) {
-                        conn.rollback();
-                        return notFound("Player not found");
-                    }
-                }
-
-                ApiModels.PlayerData player = fetchPlayerDataById(conn, request.id);
-                conn.commit();
-
-                if (player == null) {
+                if (update.executeUpdate() == 0) {
                     return notFound("Player not found");
                 }
-
-                ApiModels.UpdatePlayerStatsData data = new ApiModels.UpdatePlayerStatsData();
-                data.id = request.id;
-                data.wins = player.wins;
-                data.losses = player.losses;
-                data.updatedAt = player.updatedAt;
-                return ok(data);
-
-            } catch (Exception e) {
-                safeRollback(conn);
-                throw e;
-            } finally {
-                restoreAutoCommit(conn);
             }
+
+            ApiModels.PlayerData player = fetchPlayerDataById(conn, request.id);
+            if (player == null) {
+                return notFound("Player not found");
+            }
+
+            ApiModels.UpdatePlayerStatsData data = new ApiModels.UpdatePlayerStatsData();
+            data.id = request.id;
+            data.wins = player.wins;
+            data.losses = player.losses;
+            data.updatedAt = player.updatedAt;
+            return ok(data);
 
         } catch (Exception e) {
             logServerError("Error updating player stats", e);
@@ -453,67 +426,50 @@ public class PlayerController {
                 return unauthorized("Invalid player credentials");
             }
 
-            conn.setAutoCommit(false);
-            try {
-                ApiModels.PlayerData existingPlayer = fetchPlayerDataById(conn, request.id);
-                if (existingPlayer == null) {
-                    conn.rollback();
-                    return notFound("Player not found");
-                }
+            String createdAt = now;
+            try (PreparedStatement readCreatedAt = conn.prepareStatement("""
+                SELECT created_at
+                FROM player_mmr
+                WHERE player_id = ? AND mode = ?
+            """)) {
+                readCreatedAt.setString(1, request.id);
+                readCreatedAt.setString(2, request.mode);
 
-                String createdAt = now;
-                try (PreparedStatement readCreatedAt = conn.prepareStatement("""
-                    SELECT created_at
-                    FROM player_mmr
-                    WHERE player_id = ? AND mode = ?
-                """)) {
-                    readCreatedAt.setString(1, request.id);
-                    readCreatedAt.setString(2, request.mode);
-
-                    try (ResultSet rs = readCreatedAt.executeQuery()) {
-                        if (rs.next()) {
-                            createdAt = rs.getString("created_at");
-                        }
+                try (ResultSet rs = readCreatedAt.executeQuery()) {
+                    if (rs.next()) {
+                        createdAt = rs.getString("created_at");
                     }
                 }
-
-                try (PreparedStatement upsert = conn.prepareStatement("""
-                    INSERT INTO player_mmr (
-                        player_id,
-                        mode,
-                        mmr,
-                        created_at,
-                        updated_at
-                    )
-                    VALUES (?, ?, ?, ?, ?)
-                    ON CONFLICT(player_id, mode)
-                    DO UPDATE SET
-                        mmr = excluded.mmr,
-                        updated_at = excluded.updated_at
-                """)) {
-                    upsert.setString(1, request.id);
-                    upsert.setString(2, request.mode);
-                    upsert.setInt(3, request.mmr);
-                    upsert.setString(4, createdAt);
-                    upsert.setString(5, now);
-                    upsert.executeUpdate();
-                }
-
-                conn.commit();
-
-                ApiModels.UpdatePlayerMmrData data = new ApiModels.UpdatePlayerMmrData();
-                data.id = request.id;
-                data.mode = request.mode;
-                data.mmr = request.mmr;
-                data.updatedAt = now;
-                return ok(data);
-
-            } catch (Exception e) {
-                safeRollback(conn);
-                throw e;
-            } finally {
-                restoreAutoCommit(conn);
             }
+
+            try (PreparedStatement upsert = conn.prepareStatement("""
+                INSERT INTO player_mmr (
+                    player_id,
+                    mode,
+                    mmr,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(player_id, mode)
+                DO UPDATE SET
+                    mmr = excluded.mmr,
+                    updated_at = excluded.updated_at
+            """)) {
+                upsert.setString(1, request.id);
+                upsert.setString(2, request.mode);
+                upsert.setInt(3, request.mmr);
+                upsert.setString(4, createdAt);
+                upsert.setString(5, now);
+                upsert.executeUpdate();
+            }
+
+            ApiModels.UpdatePlayerMmrData data = new ApiModels.UpdatePlayerMmrData();
+            data.id = request.id;
+            data.mode = request.mode;
+            data.mmr = request.mmr;
+            data.updatedAt = now;
+            return ok(data);
 
         } catch (Exception e) {
             logServerError("Error updating player MMR", e);
@@ -638,6 +594,19 @@ public class PlayerController {
         }
     }
 
+    private void cleanupPartialPlayer(Connection conn, String playerId) {
+        try (PreparedStatement deleteMmr = conn.prepareStatement("DELETE FROM player_mmr WHERE player_id = ?");
+             PreparedStatement deletePlayer = conn.prepareStatement("DELETE FROM players WHERE id = ?")) {
+            deleteMmr.setString(1, playerId);
+            deleteMmr.executeUpdate();
+            deletePlayer.setString(1, playerId);
+            deletePlayer.executeUpdate();
+        } catch (Exception cleanupError) {
+            System.err.println("Failed to clean up partial player registration for id=" + playerId);
+            cleanupError.printStackTrace();
+        }
+    }
+
     private String firstNonBlank(String... values) {
         if (values == null) {
             return null;
@@ -739,20 +708,6 @@ public class PlayerController {
         return lower.contains("unique") || lower.contains("constraint");
     }
 
-    private void safeRollback(Connection conn) {
-        try {
-            conn.rollback();
-        } catch (Exception ignored) {
-        }
-    }
-
-    private void restoreAutoCommit(Connection conn) {
-        try {
-            conn.setAutoCommit(true);
-        } catch (Exception ignored) {
-        }
-    }
-
     private void logServerError(String context, Exception e) {
         System.err.println(context);
         e.printStackTrace();
@@ -766,16 +721,16 @@ public class PlayerController {
         return ResponseEntity.badRequest().body(ApiResponse.failure(error));
     }
 
+    private <T> ResponseEntity<ApiResponse<T>> notFound(String error) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.failure(error));
+    }
+
     private <T> ResponseEntity<ApiResponse<T>> unauthorized(String error) {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(ApiResponse.failure(error));
     }
 
     private <T> ResponseEntity<ApiResponse<T>> forbidden(String error) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiResponse.failure(error));
-    }
-
-    private <T> ResponseEntity<ApiResponse<T>> notFound(String error) {
-        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.failure(error));
     }
 
     private <T> ResponseEntity<ApiResponse<T>> conflict(String error) {
