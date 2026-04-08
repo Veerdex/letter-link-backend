@@ -83,6 +83,33 @@ public class Database {
                         updated_at TEXT NOT NULL
                     )
                 """);
+
+                stmt.execute("""
+                    CREATE TABLE IF NOT EXISTS game_sessions (
+                        id TEXT PRIMARY KEY,
+                        player_id TEXT NOT NULL,
+                        mode TEXT NOT NULL,
+                        board_width INTEGER NOT NULL,
+                        board_height INTEGER NOT NULL,
+                        board_letters TEXT NOT NULL,
+                        ranked INTEGER NOT NULL DEFAULT 0,
+                        time_limit_seconds INTEGER NOT NULL DEFAULT %d,
+                        status TEXT NOT NULL,
+                        started_at TEXT NOT NULL,
+                        finished_at TEXT,
+                        submitted_word_count INTEGER NOT NULL DEFAULT 0,
+                        accepted_word_count INTEGER NOT NULL DEFAULT 0,
+                        rejected_word_count INTEGER NOT NULL DEFAULT 0,
+                        accepted_words_json TEXT,
+                        rejected_words_json TEXT,
+                        validated_score INTEGER NOT NULL DEFAULT 0,
+                        counted_as_win INTEGER,
+                        mmr_before INTEGER,
+                        mmr_after INTEGER,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                """.formatted(GameDefaults.DEFAULT_GAME_TIME_LIMIT_SECONDS));
             }
 
             schemaInitialized = true;
