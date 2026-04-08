@@ -222,6 +222,100 @@ public class PlayerController {
         }
     }
 
+    @GetMapping("/players/update-settings")
+    public String updatePlayerSettings(
+            @RequestParam String id,
+            @RequestParam boolean musicEnabled,
+            @RequestParam boolean sfxEnabled,
+            @RequestParam String theme,
+            @RequestParam String currentGamemode,
+            @RequestParam int currentBoardWidth,
+            @RequestParam int currentBoardHeight
+    ) {
+        String safeId = escapeSql(id);
+        String safeTheme = escapeSql(theme);
+        String safeGamemode = escapeSql(currentGamemode);
+        String now = Instant.now().toString();
+        String safeNow = escapeSql(now);
+
+        int musicValue = musicEnabled ? 1 : 0;
+        int sfxValue = sfxEnabled ? 1 : 0;
+
+        try (Connection conn = Database.getConnection();
+             Statement stmt = conn.createStatement()) {
+
+            createTablesIfNeeded(stmt);
+
+            ResultSet rs = stmt.executeQuery("""
+                SELECT COUNT(*) AS count
+                FROM players
+                WHERE id = '%s'
+            """.formatted(safeId));
+
+            if (!rs.next() || rs.getInt("count") == 0) {
+                return "Player not found";
+            }
+
+            stmt.execute("""
+                UPDATE players
+                SET
+                    music_enabled = %d,
+                    sfx_enabled = %d,
+                    theme = '%s',
+                    current_gamemode = '%s',
+                    current_board_width = %d,
+                    current_board_height = %d,
+                    updated_at = '%s'
+                WHERE id = '%s'
+            """.formatted(
+                    musicValue,
+                    sfxValue,
+                    safeTheme,
+                    safeGamemode,
+                    currentBoardWidth,
+                    currentBoardHeight,
+                    safeNow,
+                    safeId
+            ));
+
+            return """
+                {
+                  "success":true,
+                  "id":"%s",
+                  "musicEnabled":%s,
+                  "sfxEnabled":%s,
+                  "theme":"%s",
+                  "currentGamemode":"%s",
+                  "currentBoardWidth":%d,
+                  "currentBoardHeight":%d,
+                  "updatedAt":"%s"
+                }
+                """.formatted(
+                    id,
+                    musicEnabled,
+                    sfxEnabled,
+                    theme,
+                    currentGamemode,
+                    currentBoardWidth,
+                    currentBoardHeight,
+                    now
+            );
+
+        } catch (Exception e) {
+            e.printStackTrace();
+
+            Throwable root = e;
+            while (root.getCause() != null) {
+                root = root.getCause();
+            }
+
+            return "Error updating player settings | exception=" + e.getClass().getName()
+                    + " | message=" + safeMessage(e)
+                    + " | root=" + root.getClass().getName()
+                    + " | rootMessage=" + safeMessage(root);
+        }
+    }
+
     private void createTablesIfNeeded(Statement stmt) throws Exception {
         stmt.execute("""
             CREATE TABLE IF NOT EXISTS players (
