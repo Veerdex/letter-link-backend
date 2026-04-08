@@ -89,9 +89,8 @@ public class PlayerController {
                     insertMmr.setInt(3, GameDefaults.DEFAULT_MMR);
                     insertMmr.setString(4, now);
                     insertMmr.setString(5, now);
-                    insertMmr.addBatch();
+                    insertMmr.executeUpdate();
                 }
-                insertMmr.executeBatch();
             } catch (Exception mmrInsertError) {
                 cleanupPartialPlayer(conn, playerId);
                 throw mmrInsertError;
@@ -598,17 +597,13 @@ public class PlayerController {
         }
 
         try (PreparedStatement write = conn.prepareStatement("""
-            INSERT INTO player_sessions (
+            INSERT OR REPLACE INTO player_sessions (
                 player_id,
                 auth_token,
                 created_at,
                 updated_at
             )
             VALUES (?, ?, ?, ?)
-            ON CONFLICT(player_id)
-            DO UPDATE SET
-                auth_token = excluded.auth_token,
-                updated_at = excluded.updated_at
         """)) {
             write.setString(1, playerId);
             write.setString(2, authToken);

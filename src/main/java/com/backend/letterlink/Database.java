@@ -2,7 +2,6 @@ package com.backend.letterlink;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
-import java.sql.PreparedStatement;
 import java.sql.Statement;
 
 public class Database {
@@ -41,8 +40,6 @@ public class Database {
             }
 
             try (Statement stmt = conn.createStatement()) {
-                stmt.execute("PRAGMA foreign_keys = ON");
-
                 stmt.execute("""
                     CREATE TABLE IF NOT EXISTS players (
                         id TEXT PRIMARY KEY,
@@ -88,35 +85,7 @@ public class Database {
                 """);
             }
 
-            seedMissingMmrRows(conn);
             schemaInitialized = true;
-        }
-    }
-
-    private static void seedMissingMmrRows(Connection conn) throws Exception {
-        String sql = """
-            INSERT OR IGNORE INTO player_mmr (
-                player_id,
-                mode,
-                mmr,
-                created_at,
-                updated_at
-            )
-            SELECT
-                id,
-                ?,
-                ?,
-                created_at,
-                updated_at
-            FROM players
-        """;
-
-        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
-            for (String mode : GameDefaults.ALLOWED_MMR_MODES) {
-                stmt.setString(1, mode);
-                stmt.setInt(2, GameDefaults.DEFAULT_MMR);
-                stmt.executeUpdate();
-            }
         }
     }
 
