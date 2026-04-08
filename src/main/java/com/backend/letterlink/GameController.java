@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
@@ -28,6 +29,7 @@ public class GameController {
     private static final String HEADER_PLAYER_TOKEN = "X-Player-Token";
     private static final String LETTER_BAG = "eeeeeeeeeeeeaaaaaaaaiiiiiiiiooooooonnnnnnrrrrrrttttttllllssssuuuuddddgggbbccmmppffhhvvwwyykjxqz";
     private static final Random RANDOM = new Random();
+    private static final DictionaryState DICTIONARY_STATE = loadDictionaryState();
 
     @PostMapping("/start")
     public ResponseEntity<ApiResponse<ApiModels.StartGameData>> startGame(
@@ -42,8 +44,8 @@ public class GameController {
                 return unauthorized("Invalid player credentials");
             }
 
-            if (!WordDictionary.ensureLoaded()) {
-                return serviceUnavailable("Word dictionary not configured. " + WordDictionary.statusMessage());
+            if (!dictionaryReady()) {
+                return serviceUnavailable("Word dictionary not configured. " + dictionaryStatus());
             }
 
             PlayerSettings settings = fetchPlayerSettings(conn, authPlayerId);
@@ -154,8 +156,8 @@ public class GameController {
                 return unauthorized("Invalid player credentials");
             }
 
-            if (!WordDictionary.ensureLoaded()) {
-                return serviceUnavailable("Word dictionary not configured. " + WordDictionary.statusMessage());
+            if (!dictionaryReady()) {
+                return serviceUnavailable("Word dictionary not configured. " + dictionaryStatus());
             }
 
             GameSessionRecord session = fetchGameSession(conn, authPlayerId, request.gameSessionId);
@@ -198,7 +200,7 @@ public class GameController {
                     rejectedWords.add(rejected(word, "duplicate"));
                     continue;
                 }
-                if (!WordDictionary.contains(word)) {
+                if (!dictionaryContains(word)) {
                     rejectedWords.add(rejected(word, "not-in-dictionary"));
                     continue;
                 }
@@ -453,6 +455,49 @@ public class GameController {
         return null;
     }
 
+    private boolean dictionaryReady() {
+        return DICTIONARY_STATE.dictionary != null;
+    }
+
+    private String dictionaryStatus() {
+        return DICTIONARY_STATE.status;
+    }
+
+    private boolean dictionaryContains(String word) {
+        return dictionaryReady() && DICTIONARY_STATE.dictionary.contains(word);
+    }
+
+    private static DictionaryState loadDictionaryState() {
+        try {
+            String envPath = System.getenv("LETTERLINK_WORDS_PATH");
+            if (envPath != null && !envPath.isBlank()) {
+                Path path = Path.of(envPath.trim());
+                return new DictionaryState(
+                    WordDictionary.loadFromFile(path),
+                    "Loaded from LETTERLINK_WORDS_PATH: " + path
+                );
+            }
+
+            try {
+                return new DictionaryState(
+                    WordDictionary.loadFromResource("Words.txt"),
+                    "Loaded from classpath resource: Words.txt"
+                );
+            } catch (Exception ignored) {
+                return new DictionaryState(
+                    WordDictionary.loadFromResource("words.txt"),
+                    "Loaded from classpath resource: words.txt"
+                );
+            }
+        } catch (Exception e) {
+            String message = e.getMessage();
+            if (message == null || message.isBlank()) {
+                message = e.getClass().getSimpleName();
+            }
+            return new DictionaryState(null, message);
+        }
+    }
+
     private String generateBoard(int width, int height) {
         StringBuilder board = new StringBuilder(width * height);
         for (int i = 0; i < width * height; i++) {
@@ -650,6 +695,16 @@ public class GameController {
     private static class PlayerStats {
         int wins;
         int losses;
+    }
+
+    private static class DictionaryState {
+        final WordDictionary dictionary;
+        final String status;
+
+        DictionaryState(WordDictionary dictionary, String status) {
+            this.dictionary = dictionary;
+            this.status = status;
+        }
     }
 
     private static class GameSessionRecord {
