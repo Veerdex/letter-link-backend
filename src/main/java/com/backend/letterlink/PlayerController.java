@@ -19,7 +19,10 @@ public class PlayerController {
         String playerId = UUID.randomUUID().toString();
         String now = Instant.now().toString();
 
-        try (Connection conn = Database.getConnection()) {
+        Connection conn = null;
+
+        try {
+            conn = Database.getConnection();
             conn.setAutoCommit(false);
 
             createTablesIfNeeded(conn);
@@ -86,7 +89,33 @@ public class PlayerController {
 
         } catch (Exception e) {
             e.printStackTrace();
-            return "Error registering player: " + e.getMessage();
+
+            try {
+                if (conn != null) {
+                    conn.rollback();
+                }
+            } catch (Exception rollbackException) {
+                rollbackException.printStackTrace();
+            }
+
+            Throwable root = e;
+            while (root.getCause() != null) {
+                root = root.getCause();
+            }
+
+            return "Error registering player | exception=" + e.getClass().getName()
+                    + " | message=" + safeMessage(e)
+                    + " | root=" + root.getClass().getName()
+                    + " | rootMessage=" + safeMessage(root);
+
+        } finally {
+            try {
+                if (conn != null) {
+                    conn.close();
+                }
+            } catch (Exception closeException) {
+                closeException.printStackTrace();
+            }
         }
     }
 
@@ -171,7 +200,16 @@ public class PlayerController {
 
         } catch (Exception e) {
             e.printStackTrace();
-            return "Error getting player data: " + e.getMessage();
+
+            Throwable root = e;
+            while (root.getCause() != null) {
+                root = root.getCause();
+            }
+
+            return "Error getting player data | exception=" + e.getClass().getName()
+                    + " | message=" + safeMessage(e)
+                    + " | root=" + root.getClass().getName()
+                    + " | rootMessage=" + safeMessage(root);
         }
     }
 
@@ -214,5 +252,9 @@ public class PlayerController {
                 )
             """);
         }
+    }
+
+    private String safeMessage(Throwable t) {
+        return t.getMessage() == null ? "<null>" : t.getMessage();
     }
 }
