@@ -19,16 +19,8 @@ public class PlayerController {
         String playerId = UUID.randomUUID().toString();
         String now = Instant.now().toString();
 
-        Connection conn = null;
-        Statement txStmt = null;
-
-        try {
-            conn = Database.getConnection();
-
+        try (Connection conn = Database.getConnection()) {
             createTablesIfNeeded(conn);
-
-            txStmt = conn.createStatement();
-            txStmt.execute("BEGIN IMMEDIATE");
 
             String insertPlayerSql = """
                 INSERT INTO players (
@@ -64,24 +56,9 @@ public class PlayerController {
                 ps.executeUpdate();
             }
 
-            String insertMmrSql = """
-                INSERT INTO player_mmr (
-                    player_id,
-                    mode,
-                    mmr,
-                    created_at,
-                    updated_at
-                )
-                VALUES (?, ?, ?, ?, ?)
-            """;
-
-            try (PreparedStatement ps = conn.prepareStatement(insertMmrSql)) {
-                insertDefaultMmr(ps, playerId, "4x4", now);
-                insertDefaultMmr(ps, playerId, "4x5", now);
-                insertDefaultMmr(ps, playerId, "5x5", now);
-            }
-
-            txStmt.execute("COMMIT");
+            insertDefaultMmr(conn, playerId, "4x4", now);
+            insertDefaultMmr(conn, playerId, "4x5", now);
+            insertDefaultMmr(conn, playerId, "5x5", now);
 
             return """
                 {
@@ -93,13 +70,8 @@ public class PlayerController {
         } catch (Exception e) {
             e.printStackTrace();
 
-            try {
-                if (txStmt != null) {
-                    txStmt.execute("ROLLBACK");
-                }
-            } catch (Exception rollbackException) {
-                rollbackException.printStackTrace();
-            }
+            // Best-effort cleanup in case player row was inserted but MMR rows failed later.
+            cleanupPartialPlayer(playerId);
 
             Throwable root = e;
             while (root.getCause() != null) {
@@ -110,23 +82,6 @@ public class PlayerController {
                     + " | message=" + safeMessage(e)
                     + " | root=" + root.getClass().getName()
                     + " | rootMessage=" + safeMessage(root);
-
-        } finally {
-            try {
-                if (txStmt != null) {
-                    txStmt.close();
-                }
-            } catch (Exception closeException) {
-                closeException.printStackTrace();
-            }
-
-            try {
-                if (conn != null) {
-                    conn.close();
-                }
-            } catch (Exception closeException) {
-                closeException.printStackTrace();
-            }
         }
     }
 
@@ -224,13 +179,48 @@ public class PlayerController {
         }
     }
 
-    private void insertDefaultMmr(PreparedStatement ps, String playerId, String mode, String now) throws Exception {
-        ps.setString(1, playerId);
-        ps.setString(2, mode);
-        ps.setInt(3, 1000);
-        ps.setString(4, now);
-        ps.setString(5, now);
-        ps.executeUpdate();
+    private void insertDefaultMmr(Connection conn, String playerId, String mode, String now) throws Exception {
+        String insertMmrSql = """
+            INSERT INTO player_mmr (
+                player_id,
+                mode,
+                mmr,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+        """;
+
+        try (PreparedStatement ps = conn.prepareStatement(insertMmrSql)) {
+            ps.setString(1, playerId);
+            ps.setString(2, mode);
+            ps.setInt(3, 1000);
+            ps.setString(4, now);
+            ps.setString(5, now);
+            ps.executeUpdate();
+        }
+    }
+
+    private void cleanupPartialPlayer(String playerId) {
+        if (playerId == null || playerId.isBlank()) {
+            return;
+        }
+
+        try (Connection conn = Database.getConnection()) {
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "DELETE FROM player_mmr WHERE player_id = ?")) {
+                ps.setString(1, playerId);
+                ps.executeUpdate();
+            }
+
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "DELETE FROM players WHERE id = ?")) {
+                ps.setString(1, playerId);
+                ps.executeUpdate();
+            }
+        } catch (Exception cleanupException) {
+            cleanupException.printStackTrace();
+        }
     }
 
     private void createTablesIfNeeded(Connection conn) throws Exception {
