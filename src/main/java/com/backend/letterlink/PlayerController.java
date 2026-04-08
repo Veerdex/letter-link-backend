@@ -20,12 +20,15 @@ public class PlayerController {
         String now = Instant.now().toString();
 
         Connection conn = null;
+        Statement txStmt = null;
 
         try {
             conn = Database.getConnection();
-            conn.setAutoCommit(false);
 
             createTablesIfNeeded(conn);
+
+            txStmt = conn.createStatement();
+            txStmt.execute("BEGIN IMMEDIATE");
 
             String insertPlayerSql = """
                 INSERT INTO players (
@@ -78,7 +81,7 @@ public class PlayerController {
                 insertDefaultMmr(ps, playerId, "5x5", now);
             }
 
-            conn.commit();
+            txStmt.execute("COMMIT");
 
             return """
                 {
@@ -91,8 +94,8 @@ public class PlayerController {
             e.printStackTrace();
 
             try {
-                if (conn != null) {
-                    conn.rollback();
+                if (txStmt != null) {
+                    txStmt.execute("ROLLBACK");
                 }
             } catch (Exception rollbackException) {
                 rollbackException.printStackTrace();
@@ -109,6 +112,14 @@ public class PlayerController {
                     + " | rootMessage=" + safeMessage(root);
 
         } finally {
+            try {
+                if (txStmt != null) {
+                    txStmt.close();
+                }
+            } catch (Exception closeException) {
+                closeException.printStackTrace();
+            }
+
             try {
                 if (conn != null) {
                     conn.close();
