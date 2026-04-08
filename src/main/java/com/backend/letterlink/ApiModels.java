@@ -14,6 +14,11 @@ public final class ApiModels {
     public static class RegisterPlayerData {
         public String id;
         public String username;
+        public String authToken;
+    }
+
+    public static class BootstrapSessionRequest {
+        public String id;
     }
 
     public static class PlayerData {
@@ -30,6 +35,7 @@ public final class ApiModels {
         public String createdAt;
         public String updatedAt;
         public Map<String, Integer> mmr;
+        public String authToken;
     }
 
     public static class UpdatePlayerSettingsRequest {
