@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 
 @RestController
 @RequestMapping("/players")
@@ -19,6 +20,9 @@ public class PlayerController {
 
     private static final String HEADER_PLAYER_ID = "X-Player-Id";
     private static final String HEADER_PLAYER_TOKEN = "X-Player-Token";
+
+    private static final boolean DEBUG_ERRORS = readDebugErrorsFlag();
+    private static final AtomicLong ERROR_COUNTER = new AtomicLong(1000);
 
     @PostMapping("/register")
     public ResponseEntity<ApiResponse<ApiModels.RegisterPlayerData>> registerPlayer(
@@ -35,9 +39,12 @@ public class PlayerController {
         String authToken = UUID.randomUUID() + "-" + UUID.randomUUID();
 
         try (Connection conn = Database.getConnection()) {
+            debug("register: opened connection for username=" + username);
             Database.ensureSchema(conn);
+            debug("register: schema ensured for username=" + username);
 
             if (usernameExists(conn, username)) {
+                debug("register: username already exists: " + username);
                 return conflict("Username already exists");
             }
 
@@ -68,10 +75,12 @@ public class PlayerController {
                 insertPlayer.setInt(8, GameDefaults.DEFAULT_BOARD_HEIGHT);
                 insertPlayer.setString(9, now);
                 insertPlayer.setString(10, now);
-                insertPlayer.executeUpdate();
+                int inserted = insertPlayer.executeUpdate();
+                debug("register: inserted player rows=" + inserted + ", playerId=" + playerId);
             }
 
             upsertSession(conn, playerId, authToken, now, now);
+            debug("register: session upserted for playerId=" + playerId);
 
             try (PreparedStatement insertMmr = conn.prepareStatement("""
                 INSERT INTO player_mmr (
@@ -89,7 +98,8 @@ public class PlayerController {
                     insertMmr.setInt(3, GameDefaults.DEFAULT_MMR);
                     insertMmr.setString(4, now);
                     insertMmr.setString(5, now);
-                    insertMmr.executeUpdate();
+                    int mmrInserted = insertMmr.executeUpdate();
+                    debug("register: inserted MMR row mode=" + mode + ", rows=" + mmrInserted + ", playerId=" + playerId);
                 }
             } catch (Exception mmrInsertError) {
                 cleanupPartialPlayer(conn, playerId);
@@ -106,11 +116,9 @@ public class PlayerController {
             if (isUniqueConstraintViolation(e)) {
                 return conflict("Username already exists");
             }
-            logServerError("Error registering player", e);
-            return serverError("Error registering player");
+            return serverError("Error registering player", e);
         } catch (Exception e) {
-            logServerError("Error registering player", e);
-            return serverError("Error registering player");
+            return serverError("Error registering player", e);
         }
     }
 
@@ -148,8 +156,7 @@ public class PlayerController {
             return ok(data);
 
         } catch (Exception e) {
-            logServerError("Error bootstrapping session", e);
-            return serverError("Error bootstrapping session");
+            return serverError("Error bootstrapping session", e);
         }
     }
 
@@ -180,8 +187,7 @@ public class PlayerController {
             return ok(player);
 
         } catch (Exception e) {
-            logServerError("Error getting player data", e);
-            return serverError("Error getting player data");
+            return serverError("Error getting player data", e);
         }
     }
 
@@ -216,8 +222,7 @@ public class PlayerController {
             return ok(player);
 
         } catch (Exception e) {
-            logServerError("Error getting player by username", e);
-            return serverError("Error getting player by username");
+            return serverError("Error getting player by username", e);
         }
     }
 
@@ -298,8 +303,7 @@ public class PlayerController {
             return ok(data);
 
         } catch (Exception e) {
-            logServerError("Error updating player settings", e);
-            return serverError("Error updating player settings");
+            return serverError("Error updating player settings", e);
         }
     }
 
@@ -362,8 +366,7 @@ public class PlayerController {
             return ok(data);
 
         } catch (Exception e) {
-            logServerError("Error updating player stats", e);
-            return serverError("Error updating player stats");
+            return serverError("Error updating player stats", e);
         }
     }
 
@@ -446,8 +449,7 @@ public class PlayerController {
             return ok(data);
 
         } catch (Exception e) {
-            logServerError("Error updating player MMR", e);
-            return serverError("Error updating player MMR");
+            return serverError("Error updating player MMR", e);
         }
     }
 
@@ -730,9 +732,42 @@ public class PlayerController {
         return lower.contains("unique") || lower.contains("constraint");
     }
 
-    private void logServerError(String context, Exception e) {
-        System.err.println(context);
+    private void logServerError(String context, String debugId, Exception e) {
+        Throwable root = rootCause(e);
+        System.err.println("[" + debugId + "] " + context);
+        System.err.println("[" + debugId + "] exception=" + e.getClass().getName() + ", message=" + safeMessage(e));
+        if (root != e) {
+            System.err.println("[" + debugId + "] root=" + root.getClass().getName() + ", rootMessage=" + safeMessage(root));
+        }
         e.printStackTrace();
+    }
+
+    private void debug(String message) {
+        if (DEBUG_ERRORS) {
+            System.err.println("[debug] " + message);
+        }
+    }
+
+    private Throwable rootCause(Throwable throwable) {
+        Throwable current = throwable;
+        while (current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current;
+    }
+
+    private String safeMessage(Throwable throwable) {
+        String message = throwable == null ? null : throwable.getMessage();
+        return message == null || message.isBlank() ? "<no message>" : message;
+    }
+
+    private static boolean readDebugErrorsFlag() {
+        String value = System.getenv("LETTERLINK_DEBUG_ERRORS");
+        if (value == null || value.isBlank()) {
+            return true;
+        }
+        value = value.trim().toLowerCase();
+        return value.equals("1") || value.equals("true") || value.equals("yes") || value.equals("on");
     }
 
     private <T> ResponseEntity<ApiResponse<T>> ok(T data) {
@@ -757,6 +792,24 @@ public class PlayerController {
 
     private <T> ResponseEntity<ApiResponse<T>> conflict(String error) {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.failure(error));
+    }
+
+    private <T> ResponseEntity<ApiResponse<T>> serverError(String context, Exception e) {
+        String debugId = "ERR-" + ERROR_COUNTER.incrementAndGet();
+        logServerError(context, debugId, e);
+
+        String error = context + " [" + debugId + "]";
+        if (DEBUG_ERRORS) {
+            Throwable root = rootCause(e);
+            error += " | exception=" + e.getClass().getSimpleName();
+            error += " | message=" + safeMessage(e);
+            if (root != e) {
+                error += " | root=" + root.getClass().getSimpleName();
+                error += " | rootMessage=" + safeMessage(root);
+            }
+        }
+
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(ApiResponse.failure(error));
     }
 
     private <T> ResponseEntity<ApiResponse<T>> serverError(String error) {
