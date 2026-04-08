@@ -1,5 +1,6 @@
 package com.backend.letterlink;
 
+import java.util.List;
 import java.util.Map;
 
 public final class ApiModels {
@@ -86,6 +87,68 @@ public final class ApiModels {
         public String id;
         public String mode;
         public int mmr;
+        public String updatedAt;
+    }
+
+    public static class StartGameRequest {
+        public String mode;
+        public Integer boardWidth;
+        public Integer boardHeight;
+        public Boolean ranked;
+        public Long timeLimitSeconds;
+    }
+
+    public static class StartGameData {
+        public String gameSessionId;
+        public String playerId;
+        public String mode;
+        public int boardWidth;
+        public int boardHeight;
+        public String boardLetters;
+        public List<String> boardRows;
+        public boolean ranked;
+        public long timeLimitSeconds;
+        public long startedAtMillis;
+        public String startedAt;
+    }
+
+    public static class FinishGameRequest {
+        public String gameSessionId;
+        public List<String> words;
+        public List<String> submittedWords;
+        public Long elapsedMillis;
+    }
+
+    public static class RejectedWordData {
+        public String word;
+        public String reason;
+    }
+
+    public static class FinishGameData {
+        public String gameSessionId;
+        public String status;
+        public String mode;
+        public int boardWidth;
+        public int boardHeight;
+        public String boardLetters;
+        public List<String> boardRows;
+        public boolean ranked;
+        public boolean timedOut;
+        public boolean countedAsWin;
+        public int targetScore;
+        public int validatedScore;
+        public int acceptedWordCount;
+        public int rejectedWordCount;
+        public List<String> acceptedWords;
+        public List<String> validWords;
+        public List<RejectedWordData> rejectedWords;
+        public int score;
+        public boolean win;
+        public int wins;
+        public int losses;
+        public Integer mmrBefore;
+        public Integer mmrAfter;
+        public String finishedAt;
         public String updatedAt;
     }
 }

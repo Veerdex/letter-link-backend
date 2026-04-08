@@ -9,12 +9,14 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -132,6 +134,11 @@ public class GameController {
             data.ranked = ranked;
             data.timeLimitSeconds = timeLimitSeconds;
             data.startedAt = now;
+            try {
+                data.startedAtMillis = Instant.parse(now).toEpochMilli();
+            } catch (Exception ignored) {
+                data.startedAtMillis = 0L;
+            }
             return ok(data);
 
         } catch (Exception e) {
@@ -145,7 +152,7 @@ public class GameController {
         @RequestHeader(value = HEADER_PLAYER_ID, required = false) String authPlayerId,
         @RequestHeader(value = HEADER_PLAYER_TOKEN, required = false) String authToken
     ) {
-        if (request == null || request.gameSessionId == null || request.gameSessionId.isBlank()) {
+        if (request == null || isBlank(request.gameSessionId)) {
             return badRequest("gameSessionId is required");
         }
 
@@ -172,14 +179,16 @@ public class GameController {
             long serverElapsedMillis = Math.max(0, Duration.between(Instant.parse(session.startedAt), finishedAtInstant).toMillis());
             boolean timedOut = serverElapsedMillis > (session.timeLimitSeconds + GameDefaults.GAME_FINISH_GRACE_SECONDS) * 1000L;
 
-            List<String> submittedWords = request.words == null ? List.of() : request.words;
+            List<String> submittedWords = request.words != null
+                ? request.words
+                : (request.submittedWords != null ? request.submittedWords : Collections.<String>emptyList());
             if (submittedWords.size() > 512) {
                 return badRequest("Too many submitted words");
             }
 
-            List<String> acceptedWords = new ArrayList<>();
-            List<ApiModels.RejectedWordData> rejectedWords = new ArrayList<>();
-            LinkedHashSet<String> seen = new LinkedHashSet<>();
+            List<String> acceptedWords = new ArrayList<String>();
+            List<ApiModels.RejectedWordData> rejectedWords = new ArrayList<ApiModels.RejectedWordData>();
+            LinkedHashSet<String> seen = new LinkedHashSet<String>();
             int validatedScore = 0;
 
             for (String rawWord : submittedWords) {
@@ -226,8 +235,8 @@ public class GameController {
             if (session.ranked && !timedOut) {
                 countedAsWin = validatedScore >= targetScore;
                 mmrBefore = fetchMmr(conn, authPlayerId, boardMode);
-                mmrAfter = Math.max(0, mmrBefore + (countedAsWin ? GameDefaults.RANKED_WIN_MMR_DELTA : GameDefaults.RANKED_LOSS_MMR_DELTA));
-                applyRankedResult(conn, authPlayerId, boardMode, mmrAfter, countedAsWin, finishedAt);
+                mmrAfter = Integer.valueOf(Math.max(0, mmrBefore.intValue() + (countedAsWin ? GameDefaults.RANKED_WIN_MMR_DELTA : GameDefaults.RANKED_LOSS_MMR_DELTA)));
+                applyRankedResult(conn, authPlayerId, boardMode, mmrAfter.intValue(), countedAsWin, finishedAt);
             }
 
             PlayerStats stats = fetchPlayerStats(conn, authPlayerId);
@@ -284,12 +293,16 @@ public class GameController {
             data.acceptedWordCount = acceptedWords.size();
             data.rejectedWordCount = rejectedWords.size();
             data.acceptedWords = acceptedWords;
+            data.validWords = acceptedWords;
             data.rejectedWords = rejectedWords;
+            data.score = validatedScore;
+            data.win = countedAsWin;
             data.wins = wins;
             data.losses = losses;
             data.mmrBefore = mmrBefore;
             data.mmrAfter = mmrAfter;
             data.finishedAt = finishedAt;
+            data.updatedAt = finishedAt;
             return ok(data);
 
         } catch (Exception e) {
@@ -425,7 +438,7 @@ public class GameController {
     }
 
     private boolean hasValidSession(Connection conn, String authPlayerId, String authToken) throws Exception {
-        if (authPlayerId == null || authPlayerId.isBlank() || authToken == null || authToken.isBlank()) {
+        if (isBlank(authPlayerId) || isBlank(authToken)) {
             return false;
         }
 
@@ -440,8 +453,8 @@ public class GameController {
     }
 
     private String normalizeMode(String requestedMode, String fallback) {
-        String mode = requestedMode == null || requestedMode.isBlank() ? fallback : requestedMode;
-        if (mode == null || mode.isBlank()) {
+        String mode = isBlank(requestedMode) ? fallback : requestedMode;
+        if (isBlank(mode)) {
             mode = GameDefaults.DEFAULT_GAMEMODE;
         }
         mode = mode.trim().toLowerCase(Locale.ROOT);
@@ -470,8 +483,8 @@ public class GameController {
     private static DictionaryState loadDictionaryState() {
         try {
             String envPath = System.getenv("LETTERLINK_WORDS_PATH");
-            if (envPath != null && !envPath.isBlank()) {
-                Path path = Path.of(envPath.trim());
+            if (!isBlank(envPath)) {
+                Path path = Paths.get(envPath.trim());
                 return new DictionaryState(
                     WordDictionary.loadFromFile(path),
                     "Loaded from LETTERLINK_WORDS_PATH: " + path
@@ -491,7 +504,7 @@ public class GameController {
             }
         } catch (Exception e) {
             String message = e.getMessage();
-            if (message == null || message.isBlank()) {
+            if (isBlank(message)) {
                 message = e.getClass().getSimpleName();
             }
             return new DictionaryState(null, message);
@@ -508,7 +521,7 @@ public class GameController {
     }
 
     private List<String> buildBoardRows(String boardLetters, int width, int height) {
-        List<String> rows = new ArrayList<>();
+        List<String> rows = new ArrayList<String>();
         if (boardLetters == null) {
             return rows;
         }
@@ -679,11 +692,15 @@ public class GameController {
 
     private <T> ResponseEntity<ApiResponse<T>> serverError(String context, Exception e) {
         String message = e.getMessage();
-        if (message == null || message.isBlank()) {
+        if (isBlank(message)) {
             message = e.getClass().getSimpleName();
         }
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
             .body(ApiResponse.failure(context + " | exception=" + e.getClass().getSimpleName() + " | message=" + message));
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
     }
 
     private static class PlayerSettings {

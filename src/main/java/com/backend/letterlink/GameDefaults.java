@@ -15,6 +15,8 @@ public final class GameDefaults {
     public static final int DEFAULT_BOARD_WIDTH = 4;
     public static final int DEFAULT_BOARD_HEIGHT = 4;
     public static final int DEFAULT_MMR = 1000;
+    public static final int MAX_GAME_TIME_LIMIT_SECONDS = 120;
+    public static final int DEFAULT_GAME_TIME_LIMIT_SECONDS = 90;
 
     public static final int MIN_USERNAME_LENGTH = 3;
     public static final int MAX_USERNAME_LENGTH = 32;
