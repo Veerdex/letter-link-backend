@@ -19,6 +19,7 @@ public final class ApiModels {
 
     public static class BootstrapSessionRequest {
         public String id;
+        public String playerId;
     }
 
     public static class PlayerData {

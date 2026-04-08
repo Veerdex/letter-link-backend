@@ -132,7 +132,8 @@ public class PlayerController {
             return badRequest("Request body is required");
         }
 
-        String validationError = validatePlayerId(request.id);
+        String requestedId = firstNonBlank(trimToNull(request.id), trimToNull(request.playerId));
+        String validationError = validatePlayerId(requestedId);
         if (validationError != null) {
             return badRequest(validationError);
         }
@@ -148,7 +149,7 @@ public class PlayerController {
                 FROM players
                 WHERE id = ?
             """)) {
-                findPlayer.setString(1, request.id);
+                findPlayer.setString(1, requestedId);
 
                 try (ResultSet rs = findPlayer.executeQuery()) {
                     if (!rs.next()) {
@@ -172,11 +173,11 @@ public class PlayerController {
                 String now = Instant.now().toString();
                 updateToken.setString(1, newToken);
                 updateToken.setString(2, now);
-                updateToken.setString(3, request.id);
+                updateToken.setString(3, requestedId);
                 updateToken.executeUpdate();
             }
 
-            ApiModels.PlayerData data = fetchPlayerDataById(conn, request.id);
+            ApiModels.PlayerData data = fetchPlayerDataById(conn, requestedId);
             conn.commit();
             restoreAutoCommit(conn);
 
@@ -635,6 +636,26 @@ public class PlayerController {
                 return rs.next();
             }
         }
+    }
+
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     private String validateUsername(String username) {
