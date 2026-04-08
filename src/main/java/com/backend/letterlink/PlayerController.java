@@ -5,9 +5,9 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.sql.Connection;
-import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -48,58 +48,79 @@ public class PlayerController {
                 return conflict("Username already exists");
             }
 
-            try (PreparedStatement insertPlayer = conn.prepareStatement("""
-                INSERT INTO players (
-                    id,
-                    username,
-                    music_enabled,
-                    sfx_enabled,
-                    theme,
-                    wins,
-                    losses,
-                    current_gamemode,
-                    current_board_width,
-                    current_board_height,
-                    created_at,
-                    updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)
-            """)) {
-                insertPlayer.setString(1, playerId);
-                insertPlayer.setString(2, username);
-                insertPlayer.setInt(3, boolToInt(GameDefaults.DEFAULT_MUSIC_ENABLED));
-                insertPlayer.setInt(4, boolToInt(GameDefaults.DEFAULT_SFX_ENABLED));
-                insertPlayer.setString(5, GameDefaults.DEFAULT_THEME);
-                insertPlayer.setString(6, GameDefaults.DEFAULT_GAMEMODE);
-                insertPlayer.setInt(7, GameDefaults.DEFAULT_BOARD_WIDTH);
-                insertPlayer.setInt(8, GameDefaults.DEFAULT_BOARD_HEIGHT);
-                insertPlayer.setString(9, now);
-                insertPlayer.setString(10, now);
-                int inserted = insertPlayer.executeUpdate();
-                debug("register: inserted player rows=" + inserted + ", playerId=" + playerId);
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute("""
+                    INSERT INTO players (
+                        id,
+                        username,
+                        music_enabled,
+                        sfx_enabled,
+                        theme,
+                        wins,
+                        losses,
+                        current_gamemode,
+                        current_board_width,
+                        current_board_height,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        '%s',
+                        '%s',
+                        %d,
+                        %d,
+                        '%s',
+                        0,
+                        0,
+                        '%s',
+                        %d,
+                        %d,
+                        '%s',
+                        '%s'
+                    )
+                """.formatted(
+                    escapeSql(playerId),
+                    escapeSql(username),
+                    boolToInt(GameDefaults.DEFAULT_MUSIC_ENABLED),
+                    boolToInt(GameDefaults.DEFAULT_SFX_ENABLED),
+                    escapeSql(GameDefaults.DEFAULT_THEME),
+                    escapeSql(GameDefaults.DEFAULT_GAMEMODE),
+                    GameDefaults.DEFAULT_BOARD_WIDTH,
+                    GameDefaults.DEFAULT_BOARD_HEIGHT,
+                    escapeSql(now),
+                    escapeSql(now)
+                ));
+                debug("register: inserted player, playerId=" + playerId);
             }
 
             upsertSession(conn, playerId, authToken, now, now);
             debug("register: session upserted for playerId=" + playerId);
 
-            try (PreparedStatement insertMmr = conn.prepareStatement("""
-                INSERT INTO player_mmr (
-                    player_id,
-                    mode,
-                    mmr,
-                    created_at,
-                    updated_at
-                )
-                VALUES (?, ?, ?, ?, ?)
-            """)) {
+            try (Statement stmt = conn.createStatement()) {
                 for (String mode : GameDefaults.ALLOWED_MMR_MODES) {
-                    insertMmr.setString(1, playerId);
-                    insertMmr.setString(2, mode);
-                    insertMmr.setInt(3, GameDefaults.DEFAULT_MMR);
-                    insertMmr.setString(4, now);
-                    insertMmr.setString(5, now);
-                    int mmrInserted = insertMmr.executeUpdate();
-                    debug("register: inserted MMR row mode=" + mode + ", rows=" + mmrInserted + ", playerId=" + playerId);
+                    stmt.execute("""
+                        INSERT INTO player_mmr (
+                            player_id,
+                            mode,
+                            mmr,
+                            created_at,
+                            updated_at
+                        )
+                        VALUES (
+                            '%s',
+                            '%s',
+                            %d,
+                            '%s',
+                            '%s'
+                        )
+                    """.formatted(
+                        escapeSql(playerId),
+                        escapeSql(mode),
+                        GameDefaults.DEFAULT_MMR,
+                        escapeSql(now),
+                        escapeSql(now)
+                    ));
+                    debug("register: inserted MMR row mode=" + mode + ", playerId=" + playerId);
                 }
             } catch (Exception mmrInsertError) {
                 cleanupPartialPlayer(conn, playerId);
@@ -265,28 +286,29 @@ public class PlayerController {
                 return unauthorized("Invalid player credentials");
             }
 
-            try (PreparedStatement update = conn.prepareStatement("""
-                UPDATE players
-                SET
-                    music_enabled = ?,
-                    sfx_enabled = ?,
-                    theme = ?,
-                    current_gamemode = ?,
-                    current_board_width = ?,
-                    current_board_height = ?,
-                    updated_at = ?
-                WHERE id = ?
-            """)) {
-                update.setInt(1, boolToInt(request.musicEnabled));
-                update.setInt(2, boolToInt(request.sfxEnabled));
-                update.setString(3, request.theme);
-                update.setString(4, request.currentGamemode);
-                update.setInt(5, request.currentBoardWidth);
-                update.setInt(6, request.currentBoardHeight);
-                update.setString(7, now);
-                update.setString(8, request.id);
-
-                if (update.executeUpdate() == 0) {
+            try (Statement stmt = conn.createStatement()) {
+                int updated = stmt.executeUpdate("""
+                    UPDATE players
+                    SET
+                        music_enabled = %d,
+                        sfx_enabled = %d,
+                        theme = '%s',
+                        current_gamemode = '%s',
+                        current_board_width = %d,
+                        current_board_height = %d,
+                        updated_at = '%s'
+                    WHERE id = '%s'
+                """.formatted(
+                    boolToInt(request.musicEnabled),
+                    boolToInt(request.sfxEnabled),
+                    escapeSql(request.theme),
+                    escapeSql(request.currentGamemode),
+                    request.currentBoardWidth,
+                    request.currentBoardHeight,
+                    escapeSql(now),
+                    escapeSql(request.id)
+                ));
+                if (updated == 0) {
                     return notFound("Player not found");
                 }
             }
@@ -335,20 +357,21 @@ public class PlayerController {
                 return unauthorized("Invalid player credentials");
             }
 
-            try (PreparedStatement update = conn.prepareStatement("""
-                UPDATE players
-                SET
-                    wins = wins + ?,
-                    losses = losses + ?,
-                    updated_at = ?
-                WHERE id = ?
-            """)) {
-                update.setInt(1, request.winsToAdd);
-                update.setInt(2, request.lossesToAdd);
-                update.setString(3, now);
-                update.setString(4, request.id);
-
-                if (update.executeUpdate() == 0) {
+            try (Statement stmt = conn.createStatement()) {
+                int updated = stmt.executeUpdate("""
+                    UPDATE players
+                    SET
+                        wins = wins + %d,
+                        losses = losses + %d,
+                        updated_at = '%s'
+                    WHERE id = '%s'
+                """.formatted(
+                    request.winsToAdd,
+                    request.lossesToAdd,
+                    escapeSql(now),
+                    escapeSql(request.id)
+                ));
+                if (updated == 0) {
                     return notFound("Player not found");
                 }
             }
@@ -359,7 +382,7 @@ public class PlayerController {
             }
 
             ApiModels.UpdatePlayerStatsData data = new ApiModels.UpdatePlayerStatsData();
-            data.id = request.id;
+            data.id = player.id;
             data.wins = player.wins;
             data.losses = player.losses;
             data.updatedAt = player.updatedAt;
@@ -403,42 +426,44 @@ public class PlayerController {
                 return unauthorized("Invalid player credentials");
             }
 
+            String safeId = escapeSql(request.id);
+            String safeMode = escapeSql(request.mode);
+            String safeNow = escapeSql(now);
             String createdAt = now;
-            try (PreparedStatement readCreatedAt = conn.prepareStatement("""
-                SELECT created_at
-                FROM player_mmr
-                WHERE player_id = ? AND mode = ?
-            """)) {
-                readCreatedAt.setString(1, request.id);
-                readCreatedAt.setString(2, request.mode);
 
-                try (ResultSet rs = readCreatedAt.executeQuery()) {
+            try (Statement stmt = conn.createStatement()) {
+                try (ResultSet rs = stmt.executeQuery("""
+                    SELECT created_at
+                    FROM player_mmr
+                    WHERE player_id = '%s' AND mode = '%s'
+                """.formatted(safeId, safeMode))) {
                     if (rs.next()) {
                         createdAt = rs.getString("created_at");
                     }
                 }
-            }
 
-            try (PreparedStatement upsert = conn.prepareStatement("""
-                INSERT INTO player_mmr (
-                    player_id,
-                    mode,
-                    mmr,
-                    created_at,
-                    updated_at
-                )
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(player_id, mode)
-                DO UPDATE SET
-                    mmr = excluded.mmr,
-                    updated_at = excluded.updated_at
-            """)) {
-                upsert.setString(1, request.id);
-                upsert.setString(2, request.mode);
-                upsert.setInt(3, request.mmr);
-                upsert.setString(4, createdAt);
-                upsert.setString(5, now);
-                upsert.executeUpdate();
+                stmt.execute("""
+                    INSERT OR REPLACE INTO player_mmr (
+                        player_id,
+                        mode,
+                        mmr,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        '%s',
+                        '%s',
+                        %d,
+                        '%s',
+                        '%s'
+                    )
+                """.formatted(
+                    safeId,
+                    safeMode,
+                    request.mmr,
+                    escapeSql(createdAt),
+                    safeNow
+                ));
             }
 
             ApiModels.UpdatePlayerMmrData data = new ApiModels.UpdatePlayerMmrData();
@@ -462,28 +487,28 @@ public class PlayerController {
     }
 
     private ApiModels.PlayerData fetchPlayerData(Connection conn, String field, String value) throws Exception {
-        String sql = """
-            SELECT
-                id,
-                username,
-                music_enabled,
-                sfx_enabled,
-                theme,
-                wins,
-                losses,
-                current_gamemode,
-                current_board_width,
-                current_board_height,
-                created_at,
-                updated_at
-            FROM players
-            WHERE %s = ?
-        """.formatted(field);
+        String safeValue = escapeSql(value);
 
-        try (PreparedStatement playerStmt = conn.prepareStatement(sql)) {
-            playerStmt.setString(1, value);
+        try (Statement playerStmt = conn.createStatement();
+             Statement mmrStmt = conn.createStatement()) {
 
-            try (ResultSet playerRs = playerStmt.executeQuery()) {
+            try (ResultSet playerRs = playerStmt.executeQuery("""
+                SELECT
+                    id,
+                    username,
+                    music_enabled,
+                    sfx_enabled,
+                    theme,
+                    wins,
+                    losses,
+                    current_gamemode,
+                    current_board_width,
+                    current_board_height,
+                    created_at,
+                    updated_at
+                FROM players
+                WHERE %s = '%s'
+            """.formatted(field, safeValue))) {
                 if (!playerRs.next()) {
                     return null;
                 }
@@ -494,17 +519,13 @@ public class PlayerController {
                 mmrMap.put("4x5", GameDefaults.DEFAULT_MMR);
                 mmrMap.put("5x5", GameDefaults.DEFAULT_MMR);
 
-                try (PreparedStatement mmrStmt = conn.prepareStatement("""
+                try (ResultSet mmrRs = mmrStmt.executeQuery("""
                     SELECT mode, mmr
                     FROM player_mmr
-                    WHERE player_id = ?
-                """)) {
-                    mmrStmt.setString(1, playerId);
-
-                    try (ResultSet mmrRs = mmrStmt.executeQuery()) {
-                        while (mmrRs.next()) {
-                            mmrMap.put(mmrRs.getString("mode"), mmrRs.getInt("mmr"));
-                        }
+                    WHERE player_id = '%s'
+                """.formatted(escapeSql(playerId)))) {
+                    while (mmrRs.next()) {
+                        mmrMap.put(mmrRs.getString("mode"), mmrRs.getInt("mmr"));
                     }
                 }
 
@@ -529,15 +550,13 @@ public class PlayerController {
     }
 
     private boolean hasAnySession(Connection conn, String playerId) throws Exception {
-        try (PreparedStatement stmt = conn.prepareStatement("""
-            SELECT 1
-            FROM player_sessions
-            WHERE player_id = ?
-        """)) {
-            stmt.setString(1, playerId);
-            try (ResultSet rs = stmt.executeQuery()) {
-                return rs.next();
-            }
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("""
+                 SELECT 1
+                 FROM player_sessions
+                 WHERE player_id = '%s'
+             """.formatted(escapeSql(playerId)))) {
+            return rs.next();
         }
     }
 
@@ -546,17 +565,13 @@ public class PlayerController {
             return false;
         }
 
-        try (PreparedStatement stmt = conn.prepareStatement("""
-            SELECT 1
-            FROM player_sessions
-            WHERE player_id = ? AND auth_token = ?
-        """)) {
-            stmt.setString(1, authPlayerId);
-            stmt.setString(2, authToken);
-
-            try (ResultSet rs = stmt.executeQuery()) {
-                return rs.next();
-            }
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("""
+                 SELECT 1
+                 FROM player_sessions
+                 WHERE player_id = '%s' AND auth_token = '%s'
+             """.formatted(escapeSql(authPlayerId), escapeSql(authToken)))) {
+            return rs.next();
         }
     }
 
@@ -569,62 +584,58 @@ public class PlayerController {
     }
 
     private boolean usernameExists(Connection conn, String username) throws Exception {
-        try (PreparedStatement stmt = conn.prepareStatement("""
-            SELECT 1
-            FROM players
-            WHERE username = ?
-        """)) {
-            stmt.setString(1, username);
-
-            try (ResultSet rs = stmt.executeQuery()) {
-                return rs.next();
-            }
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("""
+                 SELECT 1
+                 FROM players
+                 WHERE username = '%s'
+             """.formatted(escapeSql(username)))) {
+            return rs.next();
         }
     }
 
     private void upsertSession(Connection conn, String playerId, String authToken, String createdAt, String updatedAt) throws Exception {
         String existingCreatedAt = createdAt;
 
-        try (PreparedStatement read = conn.prepareStatement("""
-            SELECT created_at
-            FROM player_sessions
-            WHERE player_id = ?
-        """)) {
-            read.setString(1, playerId);
-            try (ResultSet rs = read.executeQuery()) {
+        try (Statement stmt = conn.createStatement()) {
+            try (ResultSet rs = stmt.executeQuery("""
+                SELECT created_at
+                FROM player_sessions
+                WHERE player_id = '%s'
+            """.formatted(escapeSql(playerId)))) {
                 if (rs.next()) {
                     existingCreatedAt = rs.getString("created_at");
                 }
             }
-        }
 
-        try (PreparedStatement write = conn.prepareStatement("""
-            INSERT OR REPLACE INTO player_sessions (
-                player_id,
-                auth_token,
-                created_at,
-                updated_at
-            )
-            VALUES (?, ?, ?, ?)
-        """)) {
-            write.setString(1, playerId);
-            write.setString(2, authToken);
-            write.setString(3, existingCreatedAt);
-            write.setString(4, updatedAt);
-            write.executeUpdate();
+            stmt.execute("""
+                INSERT OR REPLACE INTO player_sessions (
+                    player_id,
+                    auth_token,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    '%s',
+                    '%s',
+                    '%s',
+                    '%s'
+                )
+            """.formatted(
+                escapeSql(playerId),
+                escapeSql(authToken),
+                escapeSql(existingCreatedAt),
+                escapeSql(updatedAt)
+            ));
         }
     }
 
     private void cleanupPartialPlayer(Connection conn, String playerId) {
-        try (PreparedStatement deleteSession = conn.prepareStatement("DELETE FROM player_sessions WHERE player_id = ?");
-             PreparedStatement deleteMmr = conn.prepareStatement("DELETE FROM player_mmr WHERE player_id = ?");
-             PreparedStatement deletePlayer = conn.prepareStatement("DELETE FROM players WHERE id = ?")) {
-            deleteSession.setString(1, playerId);
-            deleteSession.executeUpdate();
-            deleteMmr.setString(1, playerId);
-            deleteMmr.executeUpdate();
-            deletePlayer.setString(1, playerId);
-            deletePlayer.executeUpdate();
+        try (Statement stmt = conn.createStatement()) {
+            String safePlayerId = escapeSql(playerId);
+            stmt.executeUpdate("DELETE FROM player_sessions WHERE player_id = '%s'".formatted(safePlayerId));
+            stmt.executeUpdate("DELETE FROM player_mmr WHERE player_id = '%s'".formatted(safePlayerId));
+            stmt.executeUpdate("DELETE FROM players WHERE id = '%s'".formatted(safePlayerId));
         } catch (Exception cleanupError) {
             System.err.println("Failed to clean up partial player registration for id=" + playerId);
             cleanupError.printStackTrace();
@@ -720,6 +731,13 @@ public class PlayerController {
 
     private int boolToInt(boolean value) {
         return value ? 1 : 0;
+    }
+
+    private String escapeSql(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.replace("'", "''");
     }
 
     private boolean isUniqueConstraintViolation(SQLException e) {
