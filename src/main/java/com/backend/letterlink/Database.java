@@ -2,6 +2,8 @@ package com.backend.letterlink;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.sql.Statement;
 
 public class Database {
@@ -13,11 +15,11 @@ public class Database {
         String url = System.getenv("TURSO_DB_URL");
         String token = System.getenv("TURSO_AUTH_TOKEN");
 
-        if (url == null || url.isBlank()) {
+        if (url == null || url.trim().isEmpty()) {
             throw new RuntimeException("TURSO_DB_URL is missing");
         }
 
-        if (token == null || token.isBlank()) {
+        if (token == null || token.trim().isEmpty()) {
             throw new RuntimeException("TURSO_AUTH_TOKEN is missing");
         }
 
@@ -40,12 +42,15 @@ public class Database {
             }
 
             try (Statement stmt = conn.createStatement()) {
+                stmt.execute("PRAGMA foreign_keys = ON");
+
                 stmt.execute("""
                     CREATE TABLE IF NOT EXISTS players (
                         id TEXT PRIMARY KEY,
                         username TEXT NOT NULL UNIQUE,
                         music_enabled INTEGER NOT NULL DEFAULT %d,
                         sfx_enabled INTEGER NOT NULL DEFAULT %d,
+                        vibration_enabled INTEGER NOT NULL DEFAULT %d,
                         theme TEXT NOT NULL DEFAULT '%s',
                         wins INTEGER NOT NULL DEFAULT 0,
                         losses INTEGER NOT NULL DEFAULT 0,
@@ -58,6 +63,7 @@ public class Database {
                 """.formatted(
                     boolToInt(GameDefaults.DEFAULT_MUSIC_ENABLED),
                     boolToInt(GameDefaults.DEFAULT_SFX_ENABLED),
+                    boolToInt(GameDefaults.DEFAULT_VIBRATION_ENABLED),
                     GameDefaults.DEFAULT_THEME,
                     GameDefaults.DEFAULT_GAMEMODE,
                     GameDefaults.DEFAULT_BOARD_WIDTH,
@@ -83,36 +89,57 @@ public class Database {
                         updated_at TEXT NOT NULL
                     )
                 """);
-
-                stmt.execute("""
-                    CREATE TABLE IF NOT EXISTS game_sessions (
-                        id TEXT PRIMARY KEY,
-                        player_id TEXT NOT NULL,
-                        mode TEXT NOT NULL,
-                        board_width INTEGER NOT NULL,
-                        board_height INTEGER NOT NULL,
-                        board_letters TEXT NOT NULL,
-                        ranked INTEGER NOT NULL DEFAULT 0,
-                        time_limit_seconds INTEGER NOT NULL DEFAULT %d,
-                        status TEXT NOT NULL,
-                        started_at TEXT NOT NULL,
-                        finished_at TEXT,
-                        submitted_word_count INTEGER NOT NULL DEFAULT 0,
-                        accepted_word_count INTEGER NOT NULL DEFAULT 0,
-                        rejected_word_count INTEGER NOT NULL DEFAULT 0,
-                        accepted_words_json TEXT,
-                        rejected_words_json TEXT,
-                        validated_score INTEGER NOT NULL DEFAULT 0,
-                        counted_as_win INTEGER,
-                        mmr_before INTEGER,
-                        mmr_after INTEGER,
-                        created_at TEXT NOT NULL,
-                        updated_at TEXT NOT NULL
-                    )
-                """.formatted(GameDefaults.DEFAULT_GAME_TIME_LIMIT_SECONDS));
             }
 
+            ensurePlayersVibrationColumn(conn);
+            seedMissingMmrRows(conn);
             schemaInitialized = true;
+        }
+    }
+
+    private static void ensurePlayersVibrationColumn(Connection conn) throws Exception {
+        try (Statement stmt = conn.createStatement()) {
+            stmt.execute("ALTER TABLE players ADD COLUMN vibration_enabled INTEGER NOT NULL DEFAULT "
+                + boolToInt(GameDefaults.DEFAULT_VIBRATION_ENABLED));
+        } catch (SQLException e) {
+            String message = e.getMessage();
+            if (message == null) {
+                throw e;
+            }
+
+            String lower = message.toLowerCase();
+            if (!lower.contains("duplicate column")
+                && !lower.contains("already exists")
+                && !lower.contains("duplicate name")) {
+                throw e;
+            }
+        }
+    }
+
+    private static void seedMissingMmrRows(Connection conn) throws Exception {
+        String sql = """
+            INSERT OR IGNORE INTO player_mmr (
+                player_id,
+                mode,
+                mmr,
+                created_at,
+                updated_at
+            )
+            SELECT
+                id,
+                ?,
+                ?,
+                created_at,
+                updated_at
+            FROM players
+        """;
+
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+            for (String mode : GameDefaults.ALLOWED_MMR_MODES) {
+                stmt.setString(1, mode);
+                stmt.setInt(2, GameDefaults.DEFAULT_MMR);
+                stmt.executeUpdate();
+            }
         }
     }
 

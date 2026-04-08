@@ -55,6 +55,7 @@ public class PlayerController {
                         username,
                         music_enabled,
                         sfx_enabled,
+                        vibration_enabled,
                         theme,
                         wins,
                         losses,
@@ -67,6 +68,7 @@ public class PlayerController {
                     VALUES (
                         '%s',
                         '%s',
+                        %d,
                         %d,
                         %d,
                         '%s',
@@ -83,6 +85,7 @@ public class PlayerController {
                     escapeSql(username),
                     boolToInt(GameDefaults.DEFAULT_MUSIC_ENABLED),
                     boolToInt(GameDefaults.DEFAULT_SFX_ENABLED),
+                    boolToInt(GameDefaults.DEFAULT_VIBRATION_ENABLED),
                     escapeSql(GameDefaults.DEFAULT_THEME),
                     escapeSql(GameDefaults.DEFAULT_GAMEMODE),
                     GameDefaults.DEFAULT_BOARD_WIDTH,
@@ -292,6 +295,7 @@ public class PlayerController {
                     SET
                         music_enabled = %d,
                         sfx_enabled = %d,
+                        vibration_enabled = %d,
                         theme = '%s',
                         current_gamemode = '%s',
                         current_board_width = %d,
@@ -301,6 +305,7 @@ public class PlayerController {
                 """.formatted(
                     boolToInt(request.musicEnabled),
                     boolToInt(request.sfxEnabled),
+                    boolToInt(request.vibrationEnabled),
                     escapeSql(request.theme),
                     escapeSql(request.currentGamemode),
                     request.currentBoardWidth,
@@ -317,6 +322,7 @@ public class PlayerController {
             data.id = request.id;
             data.musicEnabled = request.musicEnabled;
             data.sfxEnabled = request.sfxEnabled;
+            data.vibrationEnabled = request.vibrationEnabled;
             data.theme = request.theme;
             data.currentGamemode = request.currentGamemode;
             data.currentBoardWidth = request.currentBoardWidth;
@@ -335,7 +341,62 @@ public class PlayerController {
         @RequestHeader(value = HEADER_PLAYER_ID, required = false) String authPlayerId,
         @RequestHeader(value = HEADER_PLAYER_TOKEN, required = false) String authToken
     ) {
-        return forbidden("Client-side stats updates are disabled. Use /games/finish so the server can validate the result.");
+        if (request == null) {
+            return badRequest("Request body is required");
+        }
+
+        String idError = validatePlayerId(request.id);
+        if (idError != null) {
+            return badRequest(idError);
+        }
+
+        if (request.winsToAdd < 0 || request.lossesToAdd < 0) {
+            return badRequest("winsToAdd and lossesToAdd must be 0 or greater");
+        }
+
+        String now = Instant.now().toString();
+
+        try (Connection conn = Database.getConnection()) {
+            Database.ensureSchema(conn);
+
+            if (!isAuthenticated(conn, request.id, authPlayerId, authToken)) {
+                return unauthorized("Invalid player credentials");
+            }
+
+            try (Statement stmt = conn.createStatement()) {
+                int updated = stmt.executeUpdate("""
+                    UPDATE players
+                    SET
+                        wins = wins + %d,
+                        losses = losses + %d,
+                        updated_at = '%s'
+                    WHERE id = '%s'
+                """.formatted(
+                    request.winsToAdd,
+                    request.lossesToAdd,
+                    escapeSql(now),
+                    escapeSql(request.id)
+                ));
+                if (updated == 0) {
+                    return notFound("Player not found");
+                }
+            }
+
+            ApiModels.PlayerData player = fetchPlayerDataById(conn, request.id);
+            if (player == null) {
+                return notFound("Player not found");
+            }
+
+            ApiModels.UpdatePlayerStatsData data = new ApiModels.UpdatePlayerStatsData();
+            data.id = player.id;
+            data.wins = player.wins;
+            data.losses = player.losses;
+            data.updatedAt = player.updatedAt;
+            return ok(data);
+
+        } catch (Exception e) {
+            return serverError("Error updating player stats", e);
+        }
     }
 
     @PostMapping("/update-mmr")
@@ -344,7 +405,83 @@ public class PlayerController {
         @RequestHeader(value = HEADER_PLAYER_ID, required = false) String authPlayerId,
         @RequestHeader(value = HEADER_PLAYER_TOKEN, required = false) String authToken
     ) {
-        return forbidden("Client-side MMR updates are disabled. Use /games/finish so the server can validate the result.");
+        if (request == null) {
+            return badRequest("Request body is required");
+        }
+
+        String idError = validatePlayerId(request.id);
+        if (idError != null) {
+            return badRequest(idError);
+        }
+
+        String modeError = validateMmrMode(request.mode);
+        if (modeError != null) {
+            return badRequest(modeError);
+        }
+
+        if (request.mmr < 0) {
+            return badRequest("MMR must be 0 or greater");
+        }
+
+        String now = Instant.now().toString();
+
+        try (Connection conn = Database.getConnection()) {
+            Database.ensureSchema(conn);
+
+            if (!isAuthenticated(conn, request.id, authPlayerId, authToken)) {
+                return unauthorized("Invalid player credentials");
+            }
+
+            String safeId = escapeSql(request.id);
+            String safeMode = escapeSql(request.mode);
+            String safeNow = escapeSql(now);
+            String createdAt = now;
+
+            try (Statement stmt = conn.createStatement()) {
+                try (ResultSet rs = stmt.executeQuery("""
+                    SELECT created_at
+                    FROM player_mmr
+                    WHERE player_id = '%s' AND mode = '%s'
+                """.formatted(safeId, safeMode))) {
+                    if (rs.next()) {
+                        createdAt = rs.getString("created_at");
+                    }
+                }
+
+                stmt.execute("""
+                    INSERT OR REPLACE INTO player_mmr (
+                        player_id,
+                        mode,
+                        mmr,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        '%s',
+                        '%s',
+                        %d,
+                        '%s',
+                        '%s'
+                    )
+                """.formatted(
+                    safeId,
+                    safeMode,
+                    request.mmr,
+                    escapeSql(createdAt),
+                    safeNow
+                ));
+            }
+
+            ApiModels.UpdatePlayerMmrData data = new ApiModels.UpdatePlayerMmrData();
+            data.id = request.id;
+            data.mode = request.mode;
+            data.mmr = request.mmr;
+            data.updatedAt = now;
+            return ok(data);
+
+        } catch (Exception e) {
+            return serverError("Error updating player MMR", e);
+        }
     }
 
     private ApiModels.PlayerData fetchPlayerDataById(Connection conn, String id) throws Exception {
@@ -367,6 +504,7 @@ public class PlayerController {
                     username,
                     music_enabled,
                     sfx_enabled,
+                    vibration_enabled,
                     theme,
                     wins,
                     losses,
@@ -403,6 +541,7 @@ public class PlayerController {
                 data.username = playerRs.getString("username");
                 data.musicEnabled = playerRs.getInt("music_enabled") == 1;
                 data.sfxEnabled = playerRs.getInt("sfx_enabled") == 1;
+                data.vibrationEnabled = playerRs.getInt("vibration_enabled") == 1;
                 data.theme = playerRs.getString("theme");
                 data.wins = playerRs.getInt("wins");
                 data.losses = playerRs.getInt("losses");
