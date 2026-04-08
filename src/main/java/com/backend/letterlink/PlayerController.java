@@ -45,7 +45,6 @@ public class PlayerController {
                 INSERT INTO players (
                     id,
                     username,
-                    auth_token,
                     music_enabled,
                     sfx_enabled,
                     theme,
@@ -57,21 +56,22 @@ public class PlayerController {
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)
             """)) {
                 insertPlayer.setString(1, playerId);
                 insertPlayer.setString(2, username);
-                insertPlayer.setString(3, authToken);
-                insertPlayer.setInt(4, boolToInt(GameDefaults.DEFAULT_MUSIC_ENABLED));
-                insertPlayer.setInt(5, boolToInt(GameDefaults.DEFAULT_SFX_ENABLED));
-                insertPlayer.setString(6, GameDefaults.DEFAULT_THEME);
-                insertPlayer.setString(7, GameDefaults.DEFAULT_GAMEMODE);
-                insertPlayer.setInt(8, GameDefaults.DEFAULT_BOARD_WIDTH);
-                insertPlayer.setInt(9, GameDefaults.DEFAULT_BOARD_HEIGHT);
+                insertPlayer.setInt(3, boolToInt(GameDefaults.DEFAULT_MUSIC_ENABLED));
+                insertPlayer.setInt(4, boolToInt(GameDefaults.DEFAULT_SFX_ENABLED));
+                insertPlayer.setString(5, GameDefaults.DEFAULT_THEME);
+                insertPlayer.setString(6, GameDefaults.DEFAULT_GAMEMODE);
+                insertPlayer.setInt(7, GameDefaults.DEFAULT_BOARD_WIDTH);
+                insertPlayer.setInt(8, GameDefaults.DEFAULT_BOARD_HEIGHT);
+                insertPlayer.setString(9, now);
                 insertPlayer.setString(10, now);
-                insertPlayer.setString(11, now);
                 insertPlayer.executeUpdate();
             }
+
+            upsertSession(conn, playerId, authToken, now, now);
 
             try (PreparedStatement insertMmr = conn.prepareStatement("""
                 INSERT INTO player_mmr (
@@ -135,41 +135,16 @@ public class PlayerController {
         try (Connection conn = Database.getConnection()) {
             Database.ensureSchema(conn);
 
-            try (PreparedStatement findPlayer = conn.prepareStatement("""
-                SELECT auth_token
-                FROM players
-                WHERE id = ?
-            """)) {
-                findPlayer.setString(1, requestedId);
-
-                try (ResultSet rs = findPlayer.executeQuery()) {
-                    if (!rs.next()) {
-                        return notFound("Player not found");
-                    }
-
-                    String existingToken = rs.getString("auth_token");
-                    if (existingToken != null && !existingToken.isBlank()) {
-                        return unauthorized("Session token required for this player");
-                    }
-                }
-            }
-
-            try (PreparedStatement updateToken = conn.prepareStatement("""
-                UPDATE players
-                SET auth_token = ?, updated_at = ?
-                WHERE id = ?
-            """)) {
-                updateToken.setString(1, newToken);
-                updateToken.setString(2, now);
-                updateToken.setString(3, requestedId);
-                updateToken.executeUpdate();
-            }
-
             ApiModels.PlayerData data = fetchPlayerDataById(conn, requestedId);
             if (data == null) {
                 return notFound("Player not found");
             }
 
+            if (hasAnySession(conn, requestedId)) {
+                return unauthorized("Session token required for this player");
+            }
+
+            upsertSession(conn, requestedId, newToken, now, now);
             data.authToken = newToken;
             return ok(data);
 
@@ -499,8 +474,7 @@ public class PlayerController {
                 current_board_width,
                 current_board_height,
                 created_at,
-                updated_at,
-                auth_token
+                updated_at
             FROM players
             WHERE %s = ?
         """.formatted(field);
@@ -547,8 +521,21 @@ public class PlayerController {
                 data.createdAt = playerRs.getString("created_at");
                 data.updatedAt = playerRs.getString("updated_at");
                 data.mmr = mmrMap;
-                data.authToken = playerRs.getString("auth_token");
+                data.authToken = null;
                 return data;
+            }
+        }
+    }
+
+    private boolean hasAnySession(Connection conn, String playerId) throws Exception {
+        try (PreparedStatement stmt = conn.prepareStatement("""
+            SELECT 1
+            FROM player_sessions
+            WHERE player_id = ?
+        """)) {
+            stmt.setString(1, playerId);
+            try (ResultSet rs = stmt.executeQuery()) {
+                return rs.next();
             }
         }
     }
@@ -560,8 +547,8 @@ public class PlayerController {
 
         try (PreparedStatement stmt = conn.prepareStatement("""
             SELECT 1
-            FROM players
-            WHERE id = ? AND auth_token = ?
+            FROM player_sessions
+            WHERE player_id = ? AND auth_token = ?
         """)) {
             stmt.setString(1, authPlayerId);
             stmt.setString(2, authToken);
@@ -594,9 +581,49 @@ public class PlayerController {
         }
     }
 
+    private void upsertSession(Connection conn, String playerId, String authToken, String createdAt, String updatedAt) throws Exception {
+        String existingCreatedAt = createdAt;
+
+        try (PreparedStatement read = conn.prepareStatement("""
+            SELECT created_at
+            FROM player_sessions
+            WHERE player_id = ?
+        """)) {
+            read.setString(1, playerId);
+            try (ResultSet rs = read.executeQuery()) {
+                if (rs.next()) {
+                    existingCreatedAt = rs.getString("created_at");
+                }
+            }
+        }
+
+        try (PreparedStatement write = conn.prepareStatement("""
+            INSERT INTO player_sessions (
+                player_id,
+                auth_token,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(player_id)
+            DO UPDATE SET
+                auth_token = excluded.auth_token,
+                updated_at = excluded.updated_at
+        """)) {
+            write.setString(1, playerId);
+            write.setString(2, authToken);
+            write.setString(3, existingCreatedAt);
+            write.setString(4, updatedAt);
+            write.executeUpdate();
+        }
+    }
+
     private void cleanupPartialPlayer(Connection conn, String playerId) {
-        try (PreparedStatement deleteMmr = conn.prepareStatement("DELETE FROM player_mmr WHERE player_id = ?");
+        try (PreparedStatement deleteSession = conn.prepareStatement("DELETE FROM player_sessions WHERE player_id = ?");
+             PreparedStatement deleteMmr = conn.prepareStatement("DELETE FROM player_mmr WHERE player_id = ?");
              PreparedStatement deletePlayer = conn.prepareStatement("DELETE FROM players WHERE id = ?")) {
+            deleteSession.setString(1, playerId);
+            deleteSession.executeUpdate();
             deleteMmr.setString(1, playerId);
             deleteMmr.executeUpdate();
             deletePlayer.setString(1, playerId);

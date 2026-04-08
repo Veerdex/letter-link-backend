@@ -3,7 +3,6 @@ package com.backend.letterlink;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
-import java.sql.SQLException;
 import java.sql.Statement;
 
 public class Database {
@@ -48,7 +47,6 @@ public class Database {
                     CREATE TABLE IF NOT EXISTS players (
                         id TEXT PRIMARY KEY,
                         username TEXT NOT NULL UNIQUE,
-                        auth_token TEXT,
                         music_enabled INTEGER NOT NULL DEFAULT %d,
                         sfx_enabled INTEGER NOT NULL DEFAULT %d,
                         theme TEXT NOT NULL DEFAULT '%s',
@@ -80,8 +78,14 @@ public class Database {
                     )
                 """.formatted(GameDefaults.DEFAULT_MMR));
 
-                addColumnIfMissing(stmt, "ALTER TABLE players ADD COLUMN auth_token TEXT");
-                stmt.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_players_auth_token ON players(auth_token)");
+                stmt.execute("""
+                    CREATE TABLE IF NOT EXISTS player_sessions (
+                        player_id TEXT PRIMARY KEY,
+                        auth_token TEXT NOT NULL UNIQUE,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                """);
             }
 
             seedMissingMmrRows(conn);
@@ -112,17 +116,6 @@ public class Database {
                 stmt.setString(1, mode);
                 stmt.setInt(2, GameDefaults.DEFAULT_MMR);
                 stmt.executeUpdate();
-            }
-        }
-    }
-
-    private static void addColumnIfMissing(Statement stmt, String sql) throws Exception {
-        try {
-            stmt.execute(sql);
-        } catch (SQLException e) {
-            String message = e.getMessage();
-            if (message == null || !message.toLowerCase().contains("duplicate column")) {
-                throw e;
             }
         }
     }
