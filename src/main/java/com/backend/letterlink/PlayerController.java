@@ -136,11 +136,13 @@ public class PlayerController {
         String safeId = escapeSql(id);
 
         try (Connection conn = Database.getConnection();
-             Statement stmt = conn.createStatement()) {
+             Statement tableStmt = conn.createStatement();
+             Statement playerStmt = conn.createStatement();
+             Statement mmrStmt = conn.createStatement()) {
 
-            createTablesIfNeeded(stmt);
+            createTablesIfNeeded(tableStmt);
 
-            ResultSet playerRs = stmt.executeQuery("""
+            ResultSet playerRs = playerStmt.executeQuery("""
                 SELECT
                     id,
                     username,
@@ -162,8 +164,28 @@ public class PlayerController {
                 return "Player not found";
             }
 
-            StringBuilder json = new StringBuilder();
+            int mmr4x4 = 1000;
+            int mmr4x5 = 1000;
+            int mmr5x5 = 1000;
 
+            ResultSet mmrRs = mmrStmt.executeQuery("""
+                SELECT mode, mmr
+                FROM player_mmr
+                WHERE player_id = '%s'
+            """.formatted(safeId));
+
+            while (mmrRs.next()) {
+                String mode = mmrRs.getString("mode");
+                int mmr = mmrRs.getInt("mmr");
+
+                switch (mode) {
+                    case "4x4" -> mmr4x4 = mmr;
+                    case "4x5" -> mmr4x5 = mmr;
+                    case "5x5" -> mmr5x5 = mmr;
+                }
+            }
+
+            StringBuilder json = new StringBuilder();
             json.append("{");
             json.append("\"id\":\"").append(playerRs.getString("id")).append("\",");
             json.append("\"username\":\"").append(playerRs.getString("username")).append("\",");
@@ -177,29 +199,12 @@ public class PlayerController {
             json.append("\"currentBoardHeight\":").append(playerRs.getInt("current_board_height")).append(",");
             json.append("\"createdAt\":\"").append(playerRs.getString("created_at")).append("\",");
             json.append("\"updatedAt\":\"").append(playerRs.getString("updated_at")).append("\",");
-
-            ResultSet mmrRs = stmt.executeQuery("""
-                SELECT mode, mmr
-                FROM player_mmr
-                WHERE player_id = '%s'
-            """.formatted(safeId));
-
             json.append("\"mmr\":{");
-
-            boolean first = true;
-            while (mmrRs.next()) {
-                if (!first) {
-                    json.append(",");
-                }
-                first = false;
-
-                json.append("\"")
-                        .append(mmrRs.getString("mode"))
-                        .append("\":")
-                        .append(mmrRs.getInt("mmr"));
-            }
-
+            json.append("\"4x4\":").append(mmr4x4).append(",");
+            json.append("\"4x5\":").append(mmr4x5).append(",");
+            json.append("\"5x5\":").append(mmr5x5);
             json.append("}}");
+
             return json.toString();
 
         } catch (Exception e) {
