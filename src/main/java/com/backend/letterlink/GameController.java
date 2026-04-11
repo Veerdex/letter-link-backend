@@ -8,7 +8,6 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -55,18 +54,18 @@ public class GameController {
                 return notFound("Player not found");
             }
 
-            String mode = normalizeMode(request == null ? null : request.mode, settings.currentGamemode);
-            int boardWidth = request != null && request.boardWidth != null && request.boardWidth > 0
-                ? request.boardWidth
+            String mode = normalizeMode(request == null ? null : request.mode, settings.mode);
+            int boardWidth = request != null && request.boardWidth != null && request.boardWidth.intValue() > 0
+                ? request.boardWidth.intValue()
                 : settings.boardWidth;
-            int boardHeight = request != null && request.boardHeight != null && request.boardHeight > 0
-                ? request.boardHeight
+            int boardHeight = request != null && request.boardHeight != null && request.boardHeight.intValue() > 0
+                ? request.boardHeight.intValue()
                 : settings.boardHeight;
             boolean ranked = request != null && request.ranked != null
-                ? request.ranked
+                ? request.ranked.booleanValue()
                 : "competitive".equals(mode);
-            long timeLimitSeconds = request != null && request.timeLimitSeconds != null && request.timeLimitSeconds > 0
-                ? Math.min(request.timeLimitSeconds, GameDefaults.MAX_GAME_TIME_LIMIT_SECONDS)
+            long timeLimitSeconds = request != null && request.timeLimitSeconds != null && request.timeLimitSeconds.longValue() > 0
+                ? Math.min(request.timeLimitSeconds.longValue(), GameDefaults.MAX_GAME_TIME_LIMIT_SECONDS)
                 : GameDefaults.DEFAULT_GAME_TIME_LIMIT_SECONDS;
 
             String boardError = validateBoardSize(boardWidth, boardHeight);
@@ -134,11 +133,6 @@ public class GameController {
             data.ranked = ranked;
             data.timeLimitSeconds = timeLimitSeconds;
             data.startedAt = now;
-            try {
-                data.startedAtMillis = Instant.parse(now).toEpochMilli();
-            } catch (Exception ignored) {
-                data.startedAtMillis = 0L;
-            }
             return ok(data);
 
         } catch (Exception e) {
@@ -182,6 +176,7 @@ public class GameController {
             List<String> submittedWords = request.words != null
                 ? request.words
                 : (request.submittedWords != null ? request.submittedWords : Collections.<String>emptyList());
+
             if (submittedWords.size() > 512) {
                 return badRequest("Too many submitted words");
             }
@@ -235,7 +230,7 @@ public class GameController {
             if (session.ranked && !timedOut) {
                 countedAsWin = validatedScore >= targetScore;
                 mmrBefore = fetchMmr(conn, authPlayerId, boardMode);
-                mmrAfter = Integer.valueOf(Math.max(0, mmrBefore.intValue() + (countedAsWin ? GameDefaults.RANKED_WIN_MMR_DELTA : GameDefaults.RANKED_LOSS_MMR_DELTA)));
+                mmrAfter = Math.max(0, mmrBefore.intValue() + (countedAsWin ? GameDefaults.RANKED_WIN_MMR_DELTA : GameDefaults.RANKED_LOSS_MMR_DELTA));
                 applyRankedResult(conn, authPlayerId, boardMode, mmrAfter.intValue(), countedAsWin, finishedAt);
             }
 
@@ -293,16 +288,12 @@ public class GameController {
             data.acceptedWordCount = acceptedWords.size();
             data.rejectedWordCount = rejectedWords.size();
             data.acceptedWords = acceptedWords;
-            data.validWords = acceptedWords;
             data.rejectedWords = rejectedWords;
-            data.score = validatedScore;
-            data.win = countedAsWin;
             data.wins = wins;
             data.losses = losses;
             data.mmrBefore = mmrBefore;
             data.mmrAfter = mmrAfter;
             data.finishedAt = finishedAt;
-            data.updatedAt = finishedAt;
             return ok(data);
 
         } catch (Exception e) {
@@ -313,7 +304,7 @@ public class GameController {
     private PlayerSettings fetchPlayerSettings(Connection conn, String playerId) throws Exception {
         try (Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery("""
-                 SELECT current_gamemode, current_board_width, current_board_height
+                 SELECT mode, current_gamemode, current_board_width, current_board_height
                  FROM players
                  WHERE id = '%s'
              """.formatted(escapeSql(playerId)))) {
@@ -321,6 +312,7 @@ public class GameController {
                 return null;
             }
             PlayerSettings settings = new PlayerSettings();
+            settings.mode = rs.getString("mode");
             settings.currentGamemode = rs.getString("current_gamemode");
             settings.boardWidth = rs.getInt("current_board_width");
             settings.boardHeight = rs.getInt("current_board_height");
@@ -455,10 +447,10 @@ public class GameController {
     private String normalizeMode(String requestedMode, String fallback) {
         String mode = isBlank(requestedMode) ? fallback : requestedMode;
         if (isBlank(mode)) {
-            mode = GameDefaults.DEFAULT_GAMEMODE;
+            mode = GameDefaults.DEFAULT_MODE;
         }
         mode = mode.trim().toLowerCase(Locale.ROOT);
-        return GameDefaults.ALLOWED_GAME_MODES.contains(mode) ? mode : GameDefaults.DEFAULT_GAMEMODE;
+        return GameDefaults.ALLOWED_MODES.contains(mode) ? mode : GameDefaults.DEFAULT_MODE;
     }
 
     private String validateBoardSize(int width, int height) {
@@ -483,11 +475,10 @@ public class GameController {
     private static DictionaryState loadDictionaryState() {
         try {
             String envPath = System.getenv("LETTERLINK_WORDS_PATH");
-            if (!isBlank(envPath)) {
-                Path path = Paths.get(envPath.trim());
+            if (envPath != null && !envPath.trim().isEmpty()) {
                 return new DictionaryState(
-                    WordDictionary.loadFromFile(path),
-                    "Loaded from LETTERLINK_WORDS_PATH: " + path
+                    WordDictionary.loadFromFile(Paths.get(envPath.trim())),
+                    "Loaded from LETTERLINK_WORDS_PATH: " + envPath.trim()
                 );
             }
 
@@ -504,7 +495,7 @@ public class GameController {
             }
         } catch (Exception e) {
             String message = e.getMessage();
-            if (isBlank(message)) {
+            if (message == null || message.trim().isEmpty()) {
                 message = e.getClass().getSimpleName();
             }
             return new DictionaryState(null, message);
@@ -666,6 +657,10 @@ public class GameController {
             .replace("\t", "\\t");
     }
 
+    private boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
+    }
+
     private <T> ResponseEntity<ApiResponse<T>> ok(T data) {
         return ResponseEntity.ok(ApiResponse.success(data));
     }
@@ -692,18 +687,15 @@ public class GameController {
 
     private <T> ResponseEntity<ApiResponse<T>> serverError(String context, Exception e) {
         String message = e.getMessage();
-        if (isBlank(message)) {
+        if (message == null || message.trim().isEmpty()) {
             message = e.getClass().getSimpleName();
         }
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
             .body(ApiResponse.failure(context + " | exception=" + e.getClass().getSimpleName() + " | message=" + message));
     }
 
-    private static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
-    }
-
     private static class PlayerSettings {
+        String mode;
         String currentGamemode;
         int boardWidth;
         int boardHeight;

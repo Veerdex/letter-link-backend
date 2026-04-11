@@ -30,6 +30,7 @@ public final class ApiModels {
         public boolean sfxEnabled;
         public boolean vibrationEnabled;
         public String theme;
+        public String mode;
         public int wins;
         public int losses;
         public String currentGamemode;
@@ -47,6 +48,7 @@ public final class ApiModels {
         public boolean sfxEnabled;
         public boolean vibrationEnabled;
         public String theme;
+        public String mode;
         public String currentGamemode;
         public int currentBoardWidth;
         public int currentBoardHeight;
@@ -58,6 +60,7 @@ public final class ApiModels {
         public boolean sfxEnabled;
         public boolean vibrationEnabled;
         public String theme;
+        public String mode;
         public String currentGamemode;
         public int currentBoardWidth;
         public int currentBoardHeight;
@@ -108,7 +111,6 @@ public final class ApiModels {
         public List<String> boardRows;
         public boolean ranked;
         public long timeLimitSeconds;
-        public long startedAtMillis;
         public String startedAt;
     }
 
@@ -116,7 +118,7 @@ public final class ApiModels {
         public String gameSessionId;
         public List<String> words;
         public List<String> submittedWords;
-        public Long elapsedMillis;
+        public long elapsedMillis;
     }
 
     public static class RejectedWordData {
@@ -140,15 +142,11 @@ public final class ApiModels {
         public int acceptedWordCount;
         public int rejectedWordCount;
         public List<String> acceptedWords;
-        public List<String> validWords;
         public List<RejectedWordData> rejectedWords;
-        public int score;
-        public boolean win;
-        public int wins;
-        public int losses;
         public Integer mmrBefore;
         public Integer mmrAfter;
+        public int wins;
+        public int losses;
         public String finishedAt;
-        public String updatedAt;
     }
 }
