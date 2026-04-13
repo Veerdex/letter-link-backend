@@ -43,6 +43,7 @@ public class Database {
                     vibration_enabled INTEGER NOT NULL DEFAULT 1,
                     theme TEXT NOT NULL DEFAULT 'Cabin',
                     mode TEXT NOT NULL DEFAULT 'practice',
+                    ban_amount INTEGER NOT NULL DEFAULT 0,
                     wins INTEGER NOT NULL DEFAULT 0,
                     losses INTEGER NOT NULL DEFAULT 0,
                     current_gamemode TEXT NOT NULL DEFAULT 'Standard',
@@ -100,10 +101,57 @@ public class Database {
                 )
             """);
 
+            stmt.execute("""
+                CREATE TABLE IF NOT EXISTS matchmaking_queue (
+                    ticket_id TEXT PRIMARY KEY,
+                    player_id TEXT NOT NULL,
+                    username TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    current_gamemode TEXT NOT NULL,
+                    board_width INTEGER NOT NULL,
+                    board_height INTEGER NOT NULL,
+                    mmr INTEGER NOT NULL,
+                    power INTEGER NOT NULL DEFAULT 4,
+                    status TEXT NOT NULL,
+                    match_id TEXT,
+                    queued_at TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """);
+
+            stmt.execute("""
+                CREATE TABLE IF NOT EXISTS matches (
+                    id TEXT PRIMARY KEY,
+                    player1_id TEXT NOT NULL,
+                    player2_id TEXT NOT NULL,
+                    player1_username TEXT NOT NULL,
+                    player2_username TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    current_gamemode TEXT NOT NULL,
+                    board_width INTEGER NOT NULL,
+                    board_height INTEGER NOT NULL,
+                    power INTEGER NOT NULL DEFAULT 4,
+                    status TEXT NOT NULL,
+                    player1_acknowledged INTEGER NOT NULL DEFAULT 0,
+                    player2_acknowledged INTEGER NOT NULL DEFAULT 0,
+                    board_letters TEXT,
+                    ready_at TEXT,
+                    started_at TEXT,
+                    finished_at TEXT,
+                    abandoned_by_player_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """);
+
             ensureColumnExists(stmt, "players", "vibration_enabled",
                 "ALTER TABLE players ADD COLUMN vibration_enabled INTEGER NOT NULL DEFAULT 1");
             ensureColumnExists(stmt, "players", "mode",
                 "ALTER TABLE players ADD COLUMN mode TEXT NOT NULL DEFAULT 'practice'");
+            ensureColumnExists(stmt, "players", "ban_amount",
+                "ALTER TABLE players ADD COLUMN ban_amount INTEGER NOT NULL DEFAULT 0");
 
             tryUpdate(stmt, """
                 UPDATE players

@@ -31,6 +31,7 @@ public final class ApiModels {
         public boolean vibrationEnabled;
         public String theme;
         public String mode;
+        public int banAmount;
         public int wins;
         public int losses;
         public String currentGamemode;
@@ -40,6 +41,12 @@ public final class ApiModels {
         public String updatedAt;
         public Map<String, Integer> mmr;
         public String authToken;
+    }
+
+    public static class BanAmountData {
+        public String id;
+        public int banAmount;
+        public String updatedAt;
     }
 
     public static class UpdatePlayerSettingsRequest {
@@ -148,5 +155,100 @@ public final class ApiModels {
         public int wins;
         public int losses;
         public String finishedAt;
+    }
+
+    public static class QueueForMatchRequest {
+        public String id;
+        public String mode;
+        public String currentGamemode;
+        public int boardWidth;
+        public int boardHeight;
+        public Integer power;
+    }
+
+    public static class QueueTicketData {
+        public String ticketId;
+        public String ticketStatus;
+        public String mode;
+        public String currentGamemode;
+        public int boardWidth;
+        public int boardHeight;
+        public int mmr;
+        public int power;
+        public String queuedAt;
+        public String updatedAt;
+        public String matchId;
+    }
+
+    public static class CancelQueueRequest {
+        public String ticketId;
+    }
+
+    public static class CancelQueueData {
+        public String ticketId;
+        public boolean cancelled;
+        public String ticketStatus;
+        public String matchId;
+        public String matchStatus;
+        public String updatedAt;
+    }
+
+    public static class QueueHeartbeatRequest {
+        public String ticketId;
+    }
+
+    public static class QueueHeartbeatData {
+        public String ticketId;
+        public String ticketStatus;
+        public String matchId;
+        public String matchStatus;
+        public String updatedAt;
+    }
+
+    public static class MatchStatusData {
+        public String ticketId;
+        public String ticketStatus;
+        public String matchId;
+        public String matchStatus;
+        public boolean playerAcknowledged;
+        public boolean bothAcknowledged;
+        public boolean ready;
+        public String opponentId;
+        public String opponentUsername;
+        public String mode;
+        public String currentGamemode;
+        public int boardWidth;
+        public int boardHeight;
+        public int power;
+        public String boardLetters;
+        public List<String> boardRows;
+        public String updatedAt;
+    }
+
+    public static class AcknowledgeMatchRequest {
+        public String matchId;
+    }
+
+    public static class AcknowledgeMatchData {
+        public String matchId;
+        public String matchStatus;
+        public boolean playerAcknowledged;
+        public boolean bothAcknowledged;
+        public boolean ready;
+        public int power;
+        public String boardLetters;
+        public List<String> boardRows;
+        public String updatedAt;
+    }
+
+    public static class AbandonMatchRequest {
+        public String matchId;
+    }
+
+    public static class AbandonMatchData {
+        public String matchId;
+        public String matchStatus;
+        public int banAmount;
+        public String updatedAt;
     }
 }

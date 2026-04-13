@@ -52,6 +52,7 @@ public class PlayerController {
                     vibration_enabled,
                     theme,
                     mode,
+                    ban_amount,
                     wins,
                     losses,
                     current_gamemode,
@@ -68,6 +69,7 @@ public class PlayerController {
                     %d,
                     '%s',
                     '%s',
+                    0,
                     0,
                     0,
                     '%s',
@@ -199,6 +201,46 @@ public class PlayerController {
             return serverError("Error getting player data", e);
         }
     }
+
+
+
+@GetMapping("/ban-amount")
+public ResponseEntity<ApiResponse<ApiModels.BanAmountData>> getBanAmount(
+    @RequestParam String id,
+    @RequestHeader(value = HEADER_PLAYER_ID, required = false) String authPlayerId,
+    @RequestHeader(value = HEADER_PLAYER_TOKEN, required = false) String authToken
+) {
+    String validationError = validatePlayerId(id);
+    if (validationError != null) {
+        return badRequest(validationError);
+    }
+
+    try (Connection conn = Database.getConnection()) {
+        Database.ensureSchema(conn);
+
+        if (!hasValidSession(conn, authPlayerId, authToken)) {
+            return unauthorized("Invalid player credentials");
+        }
+
+        if (!id.equals(authPlayerId)) {
+            return unauthorized("Player id does not match authenticated session");
+        }
+
+        ApiModels.PlayerData player = fetchPlayerDataById(conn, id);
+        if (player == null) {
+            return notFound("Player not found");
+        }
+
+        ApiModels.BanAmountData data = new ApiModels.BanAmountData();
+        data.id = player.id;
+        data.banAmount = player.banAmount;
+        data.updatedAt = player.updatedAt;
+        return ok(data);
+
+    } catch (Exception e) {
+        return serverError("Error getting ban amount", e);
+    }
+}
 
     @GetMapping("/by-username")
     public ResponseEntity<ApiResponse<ApiModels.PlayerData>> getPlayerByUsername(
@@ -516,6 +558,7 @@ public class PlayerController {
                     vibration_enabled,
                     theme,
                     mode,
+                    ban_amount,
                     wins,
                     losses,
                     current_gamemode,
@@ -556,6 +599,7 @@ public class PlayerController {
             data.vibrationEnabled = playerRs.getInt("vibration_enabled") == 1;
             data.theme = playerRs.getString("theme");
             data.mode = playerRs.getString("mode");
+            data.banAmount = playerRs.getInt("ban_amount");
             data.wins = playerRs.getInt("wins");
             data.losses = playerRs.getInt("losses");
             data.currentGamemode = playerRs.getString("current_gamemode");
