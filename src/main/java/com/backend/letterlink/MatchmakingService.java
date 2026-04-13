@@ -354,8 +354,15 @@ public class MatchmakingService {
                 data.bothAcknowledged = match != null && match.player1Acknowledged && match.player2Acknowledged;
                 data.ready = match != null && GameDefaults.MATCH_STATUS_READY.equals(match.status);
                 data.power = match == null ? GameDefaults.DEFAULT_MATCH_POWER : match.power;
-                data.boardLetters = match == null ? null : match.boardLetters;
-                data.boardRows = buildBoardRows(match == null ? null : match.boardLetters, match == null ? 0 : match.boardWidth, match == null ? 0 : match.boardHeight);
+
+                if (match == null || !GameDefaults.MATCH_STATUS_READY.equals(match.status) || isBlank(match.boardLetters)) {
+                    data.boardLetters = null;
+                    data.boardRows = new ArrayList<String>();
+                } else {
+                    data.boardLetters = match.boardLetters;
+                    data.boardRows = buildBoardRows(match.boardLetters, match.boardWidth, match.boardHeight);
+                }
+
                 data.updatedAt = now;
                 return ok(data);
 
@@ -751,8 +758,15 @@ public class MatchmakingService {
                 data.boardWidth = match.boardWidth;
                 data.boardHeight = match.boardHeight;
                 data.power = match.power;
-                data.boardLetters = match.boardLetters;
-                data.boardRows = buildBoardRows(match.boardLetters, match.boardWidth, match.boardHeight);
+
+                if (data.ready && !isBlank(match.boardLetters)) {
+                    data.boardLetters = match.boardLetters;
+                    data.boardRows = buildBoardRows(match.boardLetters, match.boardWidth, match.boardHeight);
+                } else {
+                    data.boardLetters = null;
+                    data.boardRows = new ArrayList<String>();
+                }
+
                 data.updatedAt = match.updatedAt;
                 if (authPlayerId.equals(match.player1Id)) {
                     data.opponentId = match.player2Id;
@@ -769,14 +783,28 @@ public class MatchmakingService {
 
     private List<String> buildBoardRows(String boardLetters, int width, int height) {
         List<String> rows = new ArrayList<String>();
-        if (boardLetters == null || width <= 0 || height <= 0) {
+
+        if (boardLetters == null) {
             return rows;
         }
+
+        boardLetters = boardLetters.trim();
+
+        if (boardLetters.length() == 0 || width <= 0 || height <= 0) {
+            return rows;
+        }
+
         for (int row = 0; row < height; row++) {
             int start = row * width;
             int end = Math.min(start + width, boardLetters.length());
+
+            if (start >= boardLetters.length() || start >= end) {
+                break;
+            }
+
             rows.add(boardLetters.substring(start, end));
         }
+
         return rows;
     }
 
